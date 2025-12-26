@@ -1,0 +1,30 @@
+[package]
+name = "cxp-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CXP CLI - Build and query CXP files"
+
+[[bin]]
+name = "cxp"
+path = "src/main.rs"
+
+[dependencies]
+cxp-core = { path = "../cxp-core" }
+
+# CLI
+clap.workspace = true
+
+# Async
+tokio.workspace = true
+
+# Error Handling
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Misc
+chrono.workspace = true

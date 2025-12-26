@@ -1,0 +1,68 @@
+CXP Query - Example Output
+===========================
+
+Command:
+$ cxp query project.cxp "CxpReader" --limit 5 --context 2
+
+Output:
+-------
+
+Searching for 'CxpReader' in 23 files...
+
+src/format.rs (4 matches)
+--------------------------------------------------------------------------------
+ 244 |
+ 245 | /// Reader for CXP files
+ 246 | pub struct CxpReader {
+ 247 |     /// The manifest
+ 248 |     pub manifest: Manifest,
+    ...
+ 254 |
+ 255 | impl CxpReader {
+ 256 |     /// Open a CXP file for reading
+ 257 |     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+ 258 |         let path = path.as_ref().to_path_buf();
+    ...
+ 276 |
+ 277 |         Ok(Self {
+ 278 |             manifest,
+ 279 |             file_map,
+ 280 |             archive_path: path,
+    ...
+ 318 |     }
+ 319 | }
+ 320 |
+
+tests/integration_test.rs (2 matches)
+--------------------------------------------------------------------------------
+  15 | use std::path::PathBuf;
+  16 | use tempfile::TempDir;
+  17 | use cxp_core::{CxpBuilder, CxpReader};
+  18 |
+  19 | fn create_test_files(dir: &Path) -> Result<()> {
+    ...
+  78 |
+  79 |     // Test reading
+  80 |     let reader = CxpReader::open(&cxp_path)?;
+  81 |     let manifest = reader.manifest();
+  82 |
+
+Summary: 6 matches in 2 files
+
+
+Legend:
+-------
+- File paths are shown in GREEN
+- Matching lines are shown in YELLOW
+- Search terms within matches are highlighted in RED
+- Context lines are shown in DIM GRAY
+- "..." indicates gaps between matches in the same file
+
+
+Notes:
+------
+- Search is case-insensitive
+- Binary files are automatically skipped
+- Files are processed in alphabetical order
+- Processing stops after finding matches in --limit files
+- Each match shows --context lines before and after

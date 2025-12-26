@@ -1,0 +1,55 @@
+[package]
+name = "cxp-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CXP Core Library - Universal AI Context Format"
+
+[features]
+default = []
+embeddings = ["ort", "ndarray", "tokenizers", "num_cpus"]
+embeddings-wasm = ["tract-onnx", "ndarray", "tokenizers"]
+search = ["usearch"]
+
+[dependencies]
+# Core
+fastcdc.workspace = true
+zstd.workspace = true
+sha2.workspace = true
+zip.workspace = true
+rayon.workspace = true
+
+# Serialization
+flatbuffers.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Error Handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# File System
+walkdir.workspace = true
+
+# Misc
+chrono.workspace = true
+uuid.workspace = true
+hex.workspace = true
+
+# Embeddings (optional)
+ort = { version = "2.0.0-rc.10", optional = true }
+ndarray = { version = "0.16", optional = true }
+tokenizers = { version = "0.21", optional = true }
+num_cpus = { version = "1.16", optional = true }
+tract-onnx = { version = "0.22", optional = true }
+
+# Search (optional)
+usearch = { version = "2.15", optional = true }
+
+[dev-dependencies]
+tempfile = "3.14"

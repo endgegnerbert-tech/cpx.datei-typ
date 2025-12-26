@@ -1,0 +1,157 @@
+CXP Query Command - Flow Diagram
+=================================
+
+User Input:
+-----------
+$ cxp query project.cxp "search_term" --limit 10 --context 2
+
+                            |
+                            v
+                    +-----------------+
+                    |   CLI Parser    |
+                    |   (clap)        |
+                    +-----------------+
+                            |
+                            | Parse arguments
+                            v
+                    +-----------------+
+                    | query_files()   |
+                    +-----------------+
+                            |
+                            | 1. Open CXP file
+                            v
+                    +-----------------+
+                    |  CxpReader      |
+                    |  ::open()       |
+                    +-----------------+
+                            |
+                            | 2. Get file list
+                            v
+                    +-----------------+
+                    | Get file paths  |
+                    | Sort files      |
+                    +-----------------+
+                            |
+                            | 3. For each file
+                            v
+            +-------------------------------+
+            |   File Processing Loop        |
+            |                               |
+            |   +---------------------+     |
+            |   | Read file content   |     |
+            |   +---------------------+     |
+            |            |                  |
+            |            v                  |
+            |   +---------------------+     |
+            |   | Validate UTF-8      |     |
+            |   +---------------------+     |
+            |            |                  |
+            |            v                  |
+            |   +---------------------+     |
+            |   | Search line by line |     |
+            |   | (case-insensitive)  |     |
+            |   +---------------------+     |
+            |            |                  |
+            |            v                  |
+            |   +---------------------+     |
+            |   | Matches found?      |     |
+            |   +---------------------+     |
+            |       /            \          |
+            |     No              Yes       |
+            |    /                  \       |
+            | Skip              Display     |
+            |                   with context|
+            |                       |       |
+            +-------------------------------+
+                            |
+                            | 4. Check limit
+                            v
+                    +-----------------+
+                    | Limit reached?  |
+                    +-----------------+
+                       /         \
+                     Yes          No
+                      |            |
+                      |         Continue
+                      |            |
+                      v            v
+                  +------------------+
+                  | Display Summary  |
+                  +------------------+
+                            |
+                            v
+                        Output:
+                        -------
+                        File paths (green)
+                        Matching lines (yellow)
+                        Highlighted terms (red)
+                        Context lines (dim)
+                        Summary statistics
+
+
+Data Flow:
+----------
+
+CXP File (compressed)
+        |
+        v
+CxpReader.read_file()
+        |
+        v
+Decompressed bytes
+        |
+        v
+UTF-8 validation
+        |
+        v
+String content
+        |
+        v
+Lines iterator
+        |
+        v
+Pattern matching
+        |
+        v
+Match results
+        |
+        v
+highlight_term()
+        |
+        v
+Formatted output
+
+
+Key Functions:
+--------------
+
+query_files(file, term, limit, context)
+  |
+  +-- CxpReader::open(file)
+  |
+  +-- reader.file_paths()
+  |
+  +-- For each path:
+  |     |
+  |     +-- reader.read_file(path)
+  |     +-- std::str::from_utf8(content)
+  |     +-- text.lines()
+  |     +-- line.to_lowercase().contains(term)
+  |     +-- highlight_term(line, term)
+  |
+  +-- Print summary
+
+highlight_term(line, term)
+  |
+  +-- Find term positions (case-insensitive)
+  +-- Insert ANSI color codes
+  +-- Return formatted string
+
+
+Memory Usage:
+-------------
+- One file at a time
+- Lines stored as Vec<&str> (references)
+- Matches stored as Vec<(usize, &str)>
+- Minimal memory footprint
+- No parallel processing overhead

@@ -14,16 +14,22 @@ pub mod extensions;
 #[cfg(feature = "contextai")]
 pub mod contextai;
 
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub mod embeddings;
 
 #[cfg(feature = "embeddings-wasm")]
 pub mod embeddings_tract;
 
+#[cfg(feature = "multimodal")]
+pub mod multimodal;
+
 #[cfg(feature = "search")]
 pub mod index;
 
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(all(feature = "search", feature = "multimodal"))]
+pub mod unified_index;
+
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub mod semantic;
 
 pub use error::{CxpError, Result};
@@ -35,7 +41,7 @@ pub use extensions::{Extension, ExtensionManager, ExtensionManifest};
 pub use contextai::ContextAIExtension;
 
 // Export common embedding types from either feature
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub use embeddings::{EmbeddingModel, BinaryEmbedding, Int8Embedding, QuantizedEmbeddings};
 
 // Export native engine (ort-based)
@@ -46,12 +52,20 @@ pub use embeddings::EmbeddingEngine;
 #[cfg(feature = "embeddings-wasm")]
 pub use embeddings_tract::TractEmbeddingEngine;
 
+// Export multimodal engine
+#[cfg(feature = "multimodal")]
+pub use multimodal::{MultimodalEngine, SIGLIP2_DIMENSIONS, cosine_similarity, cosine_distance};
+
 // Export search types
 #[cfg(feature = "search")]
 pub use index::{HnswIndex, HnswConfig, DistanceMetric, SearchResult};
 
+// Export unified index types
+#[cfg(all(feature = "search", feature = "multimodal"))]
+pub use unified_index::{UnifiedIndex, EntryType, SearchResultWithType};
+
 // Export semantic storage types
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub use semantic::{
     EmbeddingStore,
     serialize_binary_embeddings,
@@ -84,9 +98,19 @@ pub const TEXT_EXTENSIONS: &[&str] = &[
     "csv", "tsv",
 ];
 
+/// Supported image extensions for multimodal processing
+pub const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif",
+];
+
 /// Check if a file extension is a supported text format
 pub fn is_text_file(ext: &str) -> bool {
     TEXT_EXTENSIONS.contains(&ext.to_lowercase().as_str())
+}
+
+/// Check if a file extension is a supported image format
+pub fn is_image_file(ext: &str) -> bool {
+    IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str())
 }
 
 #[cfg(test)]
@@ -129,6 +153,25 @@ mod tests {
         assert!(!is_text_file("jpg"));
         assert!(!is_text_file("pdf"));
         assert!(!is_text_file("zip"));
+    }
+
+    #[test]
+    fn test_is_image_file() {
+        assert!(is_image_file("png"));
+        assert!(is_image_file("jpg"));
+        assert!(is_image_file("jpeg"));
+        assert!(is_image_file("gif"));
+        assert!(is_image_file("webp"));
+        assert!(is_image_file("PNG"));
+        assert!(is_image_file("JPG"));
+    }
+
+    #[test]
+    fn test_is_image_file_unsupported() {
+        assert!(!is_image_file("txt"));
+        assert!(!is_image_file("rs"));
+        assert!(!is_image_file("pdf"));
+        assert!(!is_image_file("exe"));
     }
 
     #[test]

@@ -14,8 +14,9 @@ path = "src/main.rs"
 default = ["contextai"]
 embeddings = ["cxp-core/embeddings"]
 search = ["cxp-core/search"]
+multimodal = ["cxp-core/multimodal"]
 contextai = ["cxp-core/contextai"]
-full = ["embeddings", "search", "contextai"]
+full = ["embeddings", "search", "multimodal", "contextai"]
 
 [dependencies]
 cxp-core = { path = "../cxp-core" }

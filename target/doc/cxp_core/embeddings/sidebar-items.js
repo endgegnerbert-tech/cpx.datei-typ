@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["EmbeddingModel"],"struct":["BinaryEmbedding","EmbeddingEngine","Int8Embedding","QuantizedEmbeddings"]};

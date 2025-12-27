@@ -1,2 +1,2 @@
-createSrcSidebar('[["cxp_core",["",[],["chunker.rs","compress.rs","dedup.rs","embeddings.rs","error.rs","extensions.rs","format.rs","lib.rs","manifest.rs","semantic.rs"]]]]');
-//{"start":19,"fragment_lengths":[152]}
+createSrcSidebar('[["cxp_core",["",[],["chunker.rs","compress.rs","dedup.rs","embeddings.rs","error.rs","extensions.rs","format.rs","index.rs","lib.rs","manifest.rs","multimodal.rs","semantic.rs","unified_index.rs"]]],["cxp_core",["",[],["chunker.rs","compress.rs","dedup.rs","error.rs","extensions.rs","format.rs","index.rs","lib.rs","manifest.rs"]]]]');
+//{"start":19,"fragment_lengths":[198,134]}

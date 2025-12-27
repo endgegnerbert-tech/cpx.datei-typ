@@ -9,9 +9,13 @@
 //! - Int8 quantization for rescoring
 //! - Batch processing
 
-// Core types are available with either embeddings or embeddings-wasm
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
-use crate::{CxpError, Result};
+// Result type needed for engine implementations (not for quantization types)
+#[cfg(feature = "embeddings")]
+#[allow(unused_imports)]
+use crate::Result;
+
+#[cfg(feature = "embeddings")]
+use crate::CxpError;
 
 // ONNX-specific imports (only for native embeddings)
 #[cfg(feature = "embeddings")]
@@ -176,7 +180,7 @@ impl EmbeddingEngine {
     }
 
     /// Generate embeddings for a batch of texts
-    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    pub fn embed_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -205,50 +209,62 @@ impl EmbeddingEngine {
         }
 
         // Run inference
-        let outputs = self.session.run(ort::inputs! {
-            "input_ids" => input_ids.view(),
-            "attention_mask" => attention_mask.view(),
-        }?)?;
+        let input_ids_value = ort::value::Value::from_array(input_ids)?;
+        let attention_mask_value = ort::value::Value::from_array(attention_mask)?;
+        let outputs = self.session.run(ort::inputs![
+            "input_ids" => input_ids_value,
+            "attention_mask" => attention_mask_value,
+        ])?;
 
-        // Extract embeddings (usually last hidden state with mean pooling)
-        let output = outputs.get("last_hidden_state")
-            .or_else(|| outputs.get("sentence_embedding"))
-            .ok_or_else(|| CxpError::Embedding("No embedding output found".into()))?;
+        // Extract embeddings (try sentence_embedding first, then last_hidden_state)
+        let embeddings = if let Some(output) = outputs.get("sentence_embedding") {
+            // Already pooled sentence embeddings
+            output.try_extract_array::<f32>()?
+                .into_dimensionality::<ndarray::Ix2>()
+                .map_err(|e| CxpError::Embedding(format!("Failed to convert to 2D: {}", e)))?
+                .to_owned()
+        } else if let Some(output) = outputs.get("last_hidden_state") {
+            // Need to pool over sequence dimension
+            let hidden = output.try_extract_array::<f32>()?;
+            let shape = hidden.shape();
 
-        let embeddings: Array2<f32> = output.extract_tensor::<f32>()?.to_owned();
-
-        // Mean pooling if needed
-        let result: Vec<Vec<f32>> = if embeddings.shape()[1] == self.model.dimensions() {
-            // Already pooled
-            embeddings.outer_iter().map(|row| row.to_vec()).collect()
+            if shape.len() == 3 {
+                // batch x seq x hidden - need mean pooling
+                let arr3d = hidden.into_dimensionality::<ndarray::Ix3>()
+                    .map_err(|e| CxpError::Embedding(format!("Failed to convert to 3D: {}", e)))?;
+                arr3d.mean_axis(Axis(1))
+                    .ok_or_else(|| CxpError::Embedding("Mean pooling failed".into()))?
+                    .to_owned()
+            } else if shape.len() == 2 {
+                // Already batch x hidden
+                hidden.into_dimensionality::<ndarray::Ix2>()
+                    .map_err(|e| CxpError::Embedding(format!("Failed to convert to 2D: {}", e)))?
+                    .to_owned()
+            } else {
+                return Err(CxpError::Embedding(format!("Unexpected output shape: {:?}", shape)));
+            }
         } else {
-            // Need to apply mean pooling
-            embeddings
-                .mean_axis(Axis(1))
-                .ok_or_else(|| CxpError::Embedding("Mean pooling failed".into()))?
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect()
+            return Err(CxpError::Embedding("No embedding output found".into()));
         };
 
-        Ok(result)
+        Ok(embeddings.outer_iter().map(|row| row.to_vec()).collect())
     }
 
     /// Generate embedding for a single text
-    pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
+    pub fn embed(&mut self, text: &str) -> Result<Vec<f32>> {
         let batch = self.embed_batch(&[text])?;
         batch.into_iter().next()
             .ok_or_else(|| CxpError::Embedding("No embedding generated".into()))
     }
 
     /// Generate binary embeddings for a batch
-    pub fn embed_binary_batch(&self, texts: &[&str]) -> Result<Vec<BinaryEmbedding>> {
+    pub fn embed_binary_batch(&mut self, texts: &[&str]) -> Result<Vec<BinaryEmbedding>> {
         let embeddings = self.embed_batch(texts)?;
         Ok(embeddings.iter().map(|e| BinaryEmbedding::from_float(e)).collect())
     }
 
     /// Generate Int8 embeddings for a batch
-    pub fn embed_int8_batch(&self, texts: &[&str]) -> Result<Vec<Int8Embedding>> {
+    pub fn embed_int8_batch(&mut self, texts: &[&str]) -> Result<Vec<Int8Embedding>> {
         let embeddings = self.embed_batch(texts)?;
         Ok(embeddings.iter().map(|e| Int8Embedding::from_float(e)).collect())
     }

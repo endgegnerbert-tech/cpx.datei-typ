@@ -8,14 +8,14 @@
 //! - Compact serialization format
 //! - Integration with HNSW index
 
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 use crate::{BinaryEmbedding, Int8Embedding, CxpError, Result};
 
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 use serde::{Deserialize, Serialize};
 
 /// Container for storing embeddings in a CXP archive
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingStore {
     /// Binary embeddings (compact representation)
@@ -26,7 +26,7 @@ pub struct EmbeddingStore {
     pub dimensions: usize,
 }
 
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 impl EmbeddingStore {
     /// Create a new embedding store
     pub fn new(binary: Vec<BinaryEmbedding>, int8: Vec<Int8Embedding>, dimensions: usize) -> Self {
@@ -85,7 +85,7 @@ impl EmbeddingStore {
 /// - u32: dimensions
 /// - For each embedding:
 ///   - bytes: packed bits
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub fn serialize_binary_embeddings(embeddings: &[BinaryEmbedding]) -> Result<Vec<u8>> {
     if embeddings.is_empty() {
         return Ok(Vec::new());
@@ -115,7 +115,7 @@ pub fn serialize_binary_embeddings(embeddings: &[BinaryEmbedding]) -> Result<Vec
 }
 
 /// Deserialize binary embeddings from binary format
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub fn deserialize_binary_embeddings(data: &[u8]) -> Result<Vec<BinaryEmbedding>> {
     if data.is_empty() {
         return Ok(Vec::new());
@@ -160,7 +160,7 @@ pub fn deserialize_binary_embeddings(data: &[u8]) -> Result<Vec<BinaryEmbedding>
 /// - For each embedding:
 ///   - f32: scale factor
 ///   - i8 * dimensions: quantized values
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub fn serialize_int8_embeddings(embeddings: &[Int8Embedding]) -> Result<Vec<u8>> {
     if embeddings.is_empty() {
         return Ok(Vec::new());
@@ -196,7 +196,7 @@ pub fn serialize_int8_embeddings(embeddings: &[Int8Embedding]) -> Result<Vec<u8>
 }
 
 /// Deserialize Int8 embeddings from binary format
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub fn deserialize_int8_embeddings(data: &[u8]) -> Result<Vec<Int8Embedding>> {
     if data.is_empty() {
         return Ok(Vec::new());
@@ -248,7 +248,7 @@ pub fn deserialize_int8_embeddings(data: &[u8]) -> Result<Vec<Int8Embedding>> {
 }
 
 #[cfg(test)]
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 mod tests {
     use super::*;
 

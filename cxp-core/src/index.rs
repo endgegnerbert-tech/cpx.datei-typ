@@ -109,6 +109,31 @@ impl HnswConfig {
             expansion_search: 64,
         }
     }
+
+    /// Create config for 512-dimensional multimodal embeddings (SigLIP 2)
+    /// Uses binary quantization: 512 bits = 64 bytes
+    #[cfg(feature = "multimodal")]
+    pub fn multimodal_binary() -> Self {
+        Self {
+            dimensions: 64, // 512 bits = 64 bytes
+            metric: DistanceMetric::Hamming,
+            connectivity: 16,
+            expansion_add: 128,
+            expansion_search: 64,
+        }
+    }
+
+    /// Create config for 512-dimensional multimodal embeddings with float32 cosine similarity
+    #[cfg(feature = "multimodal")]
+    pub fn multimodal_float32() -> Self {
+        Self {
+            dimensions: 512,
+            metric: DistanceMetric::Cosine,
+            connectivity: 16,
+            expansion_add: 128,
+            expansion_search: 64,
+        }
+    }
 }
 
 /// HNSW vector search index
@@ -131,17 +156,16 @@ impl HnswIndex {
             _ => ScalarKind::F32,
         };
 
-        let options = usearch::IndexOptions {
+        let index = Index::new(&usearch::IndexOptions {
             dimensions: config.dimensions,
             metric: config.metric.to_usearch_metric(),
             quantization: scalar_kind,
             connectivity: config.connectivity,
             expansion_add: config.expansion_add,
             expansion_search: config.expansion_search,
-        };
-
-        let index = Index::new(&options)
-            .map_err(|e| CxpError::Search(format!("Failed to create index: {}", e)))?;
+            multi: false,
+        })
+        .map_err(|e| CxpError::Search(format!("Failed to create index: {}", e)))?;
 
         Ok(Self {
             index,
@@ -168,6 +192,9 @@ impl HnswIndex {
     }
 
     /// Add a binary vector (as bytes) to the index
+    ///
+    /// Note: When using binary quantization (B1), usearch still expects f32 input
+    /// and handles the quantization internally. This method converts bits to f32.
     pub fn add_binary(&mut self, id: u64, bits: &[u8]) -> Result<()> {
         if bits.len() != self.config.dimensions {
             return Err(CxpError::Search(format!(
@@ -177,8 +204,19 @@ impl HnswIndex {
             )));
         }
 
+        // Convert bytes to f32 (0.0 or 1.0 for each bit)
+        let mut float_vec = Vec::with_capacity(bits.len() * 8);
+        for byte in bits {
+            for i in 0..8 {
+                float_vec.push(if (byte >> i) & 1 == 1 { 1.0 } else { 0.0 });
+            }
+        }
+
+        // Truncate to actual dimensions (bits * 8 might be more than needed)
+        float_vec.truncate(self.config.dimensions * 8);
+
         self.index
-            .add(id, bits)
+            .add(id, &float_vec)
             .map_err(|e| CxpError::Search(format!("Failed to add binary vector: {}", e)))?;
 
         Ok(())
@@ -244,6 +282,9 @@ impl HnswIndex {
     }
 
     /// Search for k nearest neighbors of a binary vector
+    ///
+    /// Note: When using binary quantization (B1), usearch still expects f32 input
+    /// and handles the quantization internally. This method converts bits to f32.
     pub fn search_binary(&self, bits: &[u8], k: usize) -> Result<Vec<SearchResult>> {
         if bits.len() != self.config.dimensions {
             return Err(CxpError::Search(format!(
@@ -253,9 +294,20 @@ impl HnswIndex {
             )));
         }
 
+        // Convert bytes to f32 (0.0 or 1.0 for each bit)
+        let mut float_vec = Vec::with_capacity(bits.len() * 8);
+        for byte in bits {
+            for i in 0..8 {
+                float_vec.push(if (byte >> i) & 1 == 1 { 1.0 } else { 0.0 });
+            }
+        }
+
+        // Truncate to actual dimensions (bits * 8 might be more than needed)
+        float_vec.truncate(self.config.dimensions * 8);
+
         let results = self
             .index
-            .search(bits, k)
+            .search(&float_vec, k)
             .map_err(|e| CxpError::Search(format!("Search failed: {}", e)))?;
 
         Ok(results
@@ -302,17 +354,16 @@ impl HnswIndex {
             _ => ScalarKind::F32,
         };
 
-        let options = usearch::IndexOptions {
+        let index = Index::new(&usearch::IndexOptions {
             dimensions: config.dimensions,
             metric: config.metric.to_usearch_metric(),
             quantization: scalar_kind,
             connectivity: config.connectivity,
             expansion_add: config.expansion_add,
             expansion_search: config.expansion_search,
-        };
-
-        let index = Index::new(&options)
-            .map_err(|e| CxpError::Search(format!("Failed to create index: {}", e)))?;
+            multi: false,
+        })
+        .map_err(|e| CxpError::Search(format!("Failed to create index: {}", e)))?;
 
         index
             .load(path_str)
@@ -341,8 +392,21 @@ impl HnswIndex {
     }
 
     /// Clear the index
+    ///
+    /// Note: usearch doesn't support clearing, so we recreate the index
     pub fn clear(&mut self) {
-        self.index.clear();
+        // Recreate the index with the same configuration
+        if let Ok(new_index) = Index::new(&usearch::IndexOptions {
+            dimensions: self.config.dimensions,
+            metric: self.config.metric.to_usearch_metric(),
+            quantization: self.scalar_kind,
+            connectivity: self.config.connectivity,
+            expansion_add: self.config.expansion_add,
+            expansion_search: self.config.expansion_search,
+            multi: false,
+        }) {
+            self.index = new_index;
+        }
     }
 
     /// Remove a vector by ID

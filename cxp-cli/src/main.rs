@@ -1,12 +1,13 @@
 //! CXP CLI - Build and query CXP files
 //!
 //! Usage:
-//!   cxp build <source-dir> <output.cxp> [--embeddings --model <path>]
+//!   cxp build <source-dir> <output.cxp> [--embeddings | --images] [--model <path>]
 //!   cxp info <file.cxp>
 //!   cxp list <file.cxp>
 //!   cxp extract <file.cxp> <file-path> [output]
 //!   cxp query <file.cxp> <search-term> [--top-k N]
-//!   cxp search <file.cxp> <query> [--top-k N] --model <path>  (requires embeddings feature)
+//!   cxp search <file.cxp> [<query> | --image <path>] [--top-k N] [--result-type text|image|all] --model <path>
+//!   cxp embed-image <image-path> --model <path> [--show-dims N]  (requires multimodal feature)
 //!   cxp migrate <sqlite.db> <output.cxp> [--files <source-dir>]
 
 mod migrate;
@@ -46,7 +47,13 @@ enum Commands {
         #[arg(long)]
         embeddings: bool,
 
+        /// Include images in the build (requires multimodal feature)
+        #[arg(long)]
+        images: bool,
+
         /// Path to embedding model directory (ONNX)
+        /// For text: model.onnx + tokenizer.json
+        /// For multimodal: image_encoder.onnx + text_encoder.onnx + tokenizer.json
         #[arg(long)]
         model: Option<PathBuf>,
     },
@@ -102,8 +109,9 @@ enum Commands {
         /// CXP file to search
         file: PathBuf,
 
-        /// Search query (natural language)
-        query: String,
+        /// Search query (natural language, ignored if --image is used)
+        #[arg(required_unless_present = "image")]
+        query: Option<String>,
 
         /// Number of results
         #[arg(short = 'k', long, default_value = "10")]
@@ -112,6 +120,14 @@ enum Commands {
         /// Path to embedding model directory (ONNX)
         #[arg(long)]
         model: Option<PathBuf>,
+
+        /// Filter results by type (text, image, or all)
+        #[arg(long, default_value = "all")]
+        result_type: String,
+
+        /// Use an image as the search query (requires multimodal feature)
+        #[arg(long)]
+        image: Option<PathBuf>,
     },
 
     /// Migrate a SQLite database to CXP format
@@ -125,6 +141,21 @@ enum Commands {
         /// Optional source files directory to include
         #[arg(long)]
         files: Option<PathBuf>,
+    },
+
+    /// Generate and display embedding for an image (debugging)
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    EmbedImage {
+        /// Path to the image file
+        image: PathBuf,
+
+        /// Path to SigLIP 2 model directory
+        #[arg(long)]
+        model: PathBuf,
+
+        /// Show first N dimensions (default: 10)
+        #[arg(long, default_value = "10")]
+        show_dims: usize,
     },
 }
 
@@ -144,8 +175,8 @@ fn main() -> Result<()> {
         .init();
 
     match cli.command {
-        Commands::Build { source, output, embeddings, model } => {
-            build_cxp(&source, &output, embeddings, model.as_deref())
+        Commands::Build { source, output, embeddings, images, model } => {
+            build_cxp(&source, &output, embeddings, images, model.as_deref())
         }
         Commands::Info { file } => show_info(&file),
         Commands::List { file, long } => list_files(&file, long),
@@ -154,11 +185,15 @@ fn main() -> Result<()> {
             query_files(&file, &query, top_k, ignore_case)
         }
         #[cfg(all(feature = "embeddings", feature = "search"))]
-        Commands::Search { file, query, top_k, model } => {
-            search_semantic(&file, &query, top_k, model.as_deref())
+        Commands::Search { file, query, top_k, model, result_type, image } => {
+            search_semantic(&file, query.as_deref(), top_k, model.as_deref(), &result_type, image.as_deref())
         }
         Commands::Migrate { sqlite, output, files } => {
             migrate::migrate_sqlite_to_cxp(&sqlite, &output, files.as_deref())
+        }
+        #[cfg(all(feature = "multimodal", feature = "search"))]
+        Commands::EmbedImage { image, model, show_dims } => {
+            embed_image_command(&image, &model, show_dims)
         }
     }
 }
@@ -168,15 +203,32 @@ fn build_cxp(
     output: &PathBuf,
     embeddings: bool,
     #[allow(unused_variables)]
+    images: bool,
+    #[allow(unused_variables)]
     model: Option<&std::path::Path>,
 ) -> Result<()> {
     println!("Building CXP file...");
     println!("  Source: {}", source.display());
     println!("  Output: {}", output.display());
 
+    // Check for incompatible feature combinations
+    if images && embeddings {
+        return Err(anyhow::anyhow!(
+            "Cannot use both --embeddings and --images. Use --images with a multimodal model instead."
+        ));
+    }
+
     #[cfg(all(feature = "embeddings", feature = "search"))]
     if embeddings {
-        println!("  Embeddings: enabled");
+        println!("  Embeddings: enabled (text only)");
+        if let Some(model_path) = model {
+            println!("  Model: {}", model_path.display());
+        }
+    }
+
+    #[cfg(feature = "multimodal")]
+    if images {
+        println!("  Images: enabled (multimodal)");
         if let Some(model_path) = model {
             println!("  Model: {}", model_path.display());
         }
@@ -187,6 +239,20 @@ fn build_cxp(
     let start = Instant::now();
 
     let mut builder = CxpBuilder::new(source);
+
+    // Enable images if requested
+    #[cfg(feature = "multimodal")]
+    if images {
+        builder.with_images();
+    }
+
+    #[cfg(not(feature = "multimodal"))]
+    if images {
+        return Err(anyhow::anyhow!(
+            "Image processing is not enabled. Rebuild cxp-cli with --features multimodal,search"
+        ));
+    }
+
     builder
         .scan()
         .context("Failed to scan directory")?
@@ -214,6 +280,20 @@ fn build_cxp(
         return Err(anyhow::anyhow!(
             "Embeddings feature is not enabled. Rebuild cxp-cli with --features embeddings,search"
         ));
+    }
+
+    // Generate multimodal embeddings if images are enabled
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    if images {
+        let model_path = model.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Model path is required for multimodal embeddings. Use --model <path> to specify the SigLIP 2 model directory."
+            )
+        })?;
+
+        builder
+            .with_multimodal_embeddings(model_path)
+            .context("Failed to initialize multimodal embeddings")?;
     }
 
     builder
@@ -472,13 +552,35 @@ fn query_files(file: &PathBuf, query: &str, top_k: usize, ignore_case: bool) -> 
 #[cfg(all(feature = "embeddings", feature = "search"))]
 fn search_semantic(
     file: &PathBuf,
-    query: &str,
+    query: Option<&str>,
     top_k: usize,
     model: Option<&std::path::Path>,
+    #[allow(unused_variables)]
+    result_type: &str,
+    #[allow(unused_variables)]
+    image_query: Option<&std::path::Path>,
 ) -> Result<()> {
     use cxp_core::{EmbeddingEngine, EmbeddingModel};
 
-    println!("Semantic search: \"{}\"", query);
+    // Determine query type
+    let is_image_query = image_query.is_some();
+
+    if is_image_query {
+        #[cfg(not(feature = "multimodal"))]
+        {
+            return Err(anyhow::anyhow!(
+                "Image search requires multimodal feature. Rebuild with --features multimodal,search"
+            ));
+        }
+
+        #[cfg(feature = "multimodal")]
+        {
+            println!("Image-to-multimodal search: {}", image_query.unwrap().display());
+        }
+    } else {
+        println!("Semantic search: \"{}\"", query.unwrap_or(""));
+    }
+
     println!();
 
     // Open CXP file
@@ -494,20 +596,38 @@ fn search_semantic(
     println!("Loading embeddings...");
     reader.load_embeddings().context("Failed to load embeddings")?;
 
-    // Load embedding model for query encoding
+    // Load embedding model and generate query embedding
     let model_path = model.ok_or_else(|| {
         anyhow::anyhow!(
             "Model path is required for search. Use --model <path> to specify the model directory."
         )
     })?;
 
-    println!("Loading embedding model...");
-    let engine = EmbeddingEngine::load(model_path, EmbeddingModel::MiniLM)
-        .context("Failed to load embedding model")?;
+    let query_embedding = if is_image_query {
+        #[cfg(feature = "multimodal")]
+        {
+            use cxp_core::MultimodalEngine;
 
-    // Generate query embedding
-    println!("Encoding query...");
-    let query_embedding = engine.embed(query).context("Failed to encode query")?;
+            println!("Loading multimodal model...");
+            let mut engine = MultimodalEngine::load(model_path)
+                .context("Failed to load multimodal model")?;
+
+            println!("Encoding image...");
+            engine.embed_image(image_query.unwrap())
+                .context("Failed to encode image")?
+        }
+        #[cfg(not(feature = "multimodal"))]
+        {
+            unreachable!() // Already checked above
+        }
+    } else {
+        println!("Loading embedding model...");
+        let engine = EmbeddingEngine::load(model_path, EmbeddingModel::MiniLM)
+            .context("Failed to load embedding model")?;
+
+        println!("Encoding query...");
+        engine.embed(query.unwrap()).context("Failed to encode query")?
+    };
 
     // Search
     println!("Searching...");
@@ -553,6 +673,60 @@ fn search_semantic(
 
         println!();
     }
+
+    Ok(())
+}
+
+/// Generate and display embedding for an image (debugging tool)
+#[cfg(all(feature = "multimodal", feature = "search"))]
+fn embed_image_command(
+    image_path: &PathBuf,
+    model_path: &PathBuf,
+    show_dims: usize,
+) -> Result<()> {
+    use cxp_core::MultimodalEngine;
+
+    println!("Loading SigLIP 2 model...");
+    let mut engine = MultimodalEngine::load(model_path)
+        .context("Failed to load multimodal model")?;
+
+    println!("Embedding image: {}", image_path.display());
+    let embedding = engine.embed_image(image_path)
+        .context("Failed to embed image")?;
+
+    println!();
+    println!("Image Embedding");
+    println!("===============");
+    println!("Dimensions: {}", embedding.len());
+    println!();
+
+    // Display statistics
+    let sum: f32 = embedding.iter().sum();
+    let mean = sum / embedding.len() as f32;
+    let variance: f32 = embedding.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / embedding.len() as f32;
+    let std_dev = variance.sqrt();
+    let min = embedding.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max = embedding.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+    println!("Statistics:");
+    println!("  Mean:     {:.6}", mean);
+    println!("  Std Dev:  {:.6}", std_dev);
+    println!("  Min:      {:.6}", min);
+    println!("  Max:      {:.6}", max);
+    println!();
+
+    // Display first N dimensions
+    let display_count = show_dims.min(embedding.len());
+    println!("First {} dimensions:", display_count);
+    for (i, value) in embedding.iter().take(display_count).enumerate() {
+        println!("  [{}] = {:.6}", i, value);
+    }
+
+    if embedding.len() > display_count {
+        println!("  ... ({} more dimensions)", embedding.len() - display_count);
+    }
+
+    println!();
 
     Ok(())
 }

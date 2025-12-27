@@ -63,7 +63,7 @@ impl From<serde_json::Error> for CxpError {
     }
 }
 
-#[cfg(feature = "embeddings")]
+#[cfg(any(feature = "embeddings", feature = "multimodal"))]
 impl From<ort::Error> for CxpError {
     fn from(e: ort::Error) -> Self {
         CxpError::Embedding(e.to_string())

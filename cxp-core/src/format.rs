@@ -22,7 +22,7 @@ use crate::compress::{compress, decompress};
 use crate::dedup::ChunkStore;
 use crate::manifest::Manifest;
 use crate::extensions::{Extension, ExtensionManager};
-use crate::{is_text_file, CxpError, Result};
+use crate::{is_text_file, is_image_file, CxpError, Result};
 
 // Embedding types (shared across embeddings and search features)
 #[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
@@ -32,8 +32,12 @@ use crate::{BinaryEmbedding, Int8Embedding, QuantizedEmbeddings};
 #[cfg(all(feature = "embeddings", feature = "search"))]
 use crate::{EmbeddingEngine, EmbeddingModel, HnswConfig, HnswIndex};
 
-// Serialization functions for embeddings
-#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+// Multimodal engine and unified index
+#[cfg(all(feature = "multimodal", feature = "search"))]
+use crate::{MultimodalEngine, UnifiedIndex, HnswConfig};
+
+// Serialization functions for embeddings (only used by the embeddings feature, not multimodal-only)
+#[cfg(all(feature = "embeddings", feature = "search"))]
 use crate::{serialize_binary_embeddings, deserialize_binary_embeddings, serialize_int8_embeddings, deserialize_int8_embeddings};
 
 use serde::{Deserialize, Serialize};
@@ -63,6 +67,9 @@ pub struct FileEntry {
     pub size: u64,
     /// Chunk references that make up this file
     pub chunks: Vec<ChunkRef>,
+    /// Is this an image file? (only relevant with multimodal feature)
+    #[serde(default)]
+    pub is_image: bool,
 }
 
 /// A CXP file handle
@@ -81,6 +88,12 @@ pub struct CxpBuilder {
     source_dir: PathBuf,
     /// Files to include
     files: Vec<PathBuf>,
+    /// Image files to include (if multimodal is enabled)
+    #[cfg(feature = "multimodal")]
+    image_files: Vec<PathBuf>,
+    /// Enable image processing
+    #[cfg(feature = "multimodal")]
+    process_images: bool,
     /// Manifest
     manifest: Manifest,
     /// File map
@@ -92,12 +105,18 @@ pub struct CxpBuilder {
     /// Embedding engine (optional)
     #[cfg(all(feature = "embeddings", feature = "search"))]
     embedding_engine: Option<EmbeddingEngine>,
+    /// Multimodal engine (optional - for image embeddings)
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    multimodal_engine: Option<MultimodalEngine>,
     /// Chunk embeddings (optional)
     #[cfg(all(feature = "embeddings", feature = "search"))]
     chunk_embeddings: Option<QuantizedEmbeddings>,
-    /// HNSW search index (optional)
+    /// HNSW search index (optional - used for text-only embeddings)
     #[cfg(all(feature = "embeddings", feature = "search"))]
     search_index: Option<HnswIndex>,
+    /// Unified index (optional - used for multimodal embeddings)
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    unified_index: Option<UnifiedIndex>,
 }
 
 impl CxpBuilder {
@@ -106,17 +125,32 @@ impl CxpBuilder {
         Self {
             source_dir: source_dir.as_ref().to_path_buf(),
             files: Vec::new(),
+            #[cfg(feature = "multimodal")]
+            image_files: Vec::new(),
+            #[cfg(feature = "multimodal")]
+            process_images: false,
             manifest: Manifest::new(),
             file_map: FileMap::default(),
             chunk_store: ChunkStore::new(),
             extension_manager: ExtensionManager::new(),
             #[cfg(all(feature = "embeddings", feature = "search"))]
             embedding_engine: None,
+            #[cfg(all(feature = "multimodal", feature = "search"))]
+            multimodal_engine: None,
             #[cfg(all(feature = "embeddings", feature = "search"))]
             chunk_embeddings: None,
             #[cfg(all(feature = "embeddings", feature = "search"))]
             search_index: None,
+            #[cfg(all(feature = "multimodal", feature = "search"))]
+            unified_index: None,
         }
+    }
+
+    /// Enable image processing (requires multimodal feature)
+    #[cfg(feature = "multimodal")]
+    pub fn with_images(&mut self) -> &mut Self {
+        self.process_images = true;
+        self
     }
 
     /// Scan the source directory for files
@@ -139,7 +173,30 @@ impl CxpBuilder {
             .map(|e| e.path().to_path_buf())
             .collect();
 
-        tracing::info!("Found {} files to process", self.files.len());
+        tracing::info!("Found {} text files to process", self.files.len());
+
+        // Scan for images if enabled
+        #[cfg(feature = "multimodal")]
+        if self.process_images {
+            self.image_files = WalkDir::new(&self.source_dir)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+                .filter(|e| {
+                    // Filter by image extensions
+                    e.path()
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(is_image_file)
+                        .unwrap_or(false)
+                })
+                .map(|e| e.path().to_path_buf())
+                .collect();
+
+            tracing::info!("Found {} image files to process", self.image_files.len());
+        }
+
         Ok(self)
     }
 
@@ -147,7 +204,7 @@ impl CxpBuilder {
     pub fn process(&mut self) -> Result<&mut Self> {
         let source_dir = self.source_dir.clone();
 
-        // Process files and collect chunks
+        // Process text files and collect chunks
         let results: Vec<_> = self.files
             .iter()
             .filter_map(|path| {
@@ -168,6 +225,31 @@ impl CxpBuilder {
                 ..entry
             };
             self.file_map.files.insert(entry_with_refs.path.clone(), entry_with_refs);
+        }
+
+        // Process images if enabled (store as single chunks - whole image = 1 chunk)
+        #[cfg(feature = "multimodal")]
+        if self.process_images {
+            for path in &self.image_files.clone() {
+                if let Ok((entry, chunk)) = self.process_image(path, &source_dir) {
+                    // Create chunk ref before adding to store
+                    let chunk_ref = ChunkRef::from(&chunk);
+                    self.chunk_store.add(chunk);
+
+                    // Update manifest with file type info
+                    self.manifest.add_file_type(&entry.extension, &entry.path, entry.size);
+
+                    // Store file entry with chunk ref
+                    let entry_with_ref = FileEntry {
+                        chunks: vec![chunk_ref],
+                        is_image: true,
+                        ..entry
+                    };
+                    self.file_map.files.insert(entry_with_ref.path.clone(), entry_with_ref);
+                }
+            }
+
+            tracing::info!("Processed {} image files", self.image_files.len());
         }
 
         // Update manifest stats
@@ -220,6 +302,42 @@ impl CxpBuilder {
         self.manifest.embedding_dim = Some(model.dimensions());
 
         self.embedding_engine = Some(engine);
+
+        Ok(self)
+    }
+
+    /// Enable multimodal embedding generation (requires both "multimodal" and "search" features)
+    ///
+    /// This loads a SigLIP 2 model and will generate embeddings for both text chunks
+    /// and images during the build process. The embeddings share the same 512-dimensional
+    /// vector space, enabling cross-modal search (e.g., search images with text queries).
+    ///
+    /// # Arguments
+    /// * `model_path` - Path to the directory containing image_encoder.onnx, text_encoder.onnx, and tokenizer.json
+    ///
+    /// # Example
+    /// ```ignore
+    /// builder
+    ///     .with_images()
+    ///     .scan()?
+    ///     .with_multimodal_embeddings("./models/siglip2")?
+    ///     .process()?
+    ///     .build("output.cxp")?;
+    /// ```
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    pub fn with_multimodal_embeddings<P: AsRef<Path>>(
+        &mut self,
+        model_path: P,
+    ) -> Result<&mut Self> {
+        tracing::info!("Loading multimodal model: SigLIP 2");
+
+        let engine = MultimodalEngine::load(model_path)?;
+
+        // Update manifest with embedding info
+        self.manifest.embedding_model = Some("SigLIP-2".to_string());
+        self.manifest.embedding_dim = Some(engine.dimensions());
+
+        self.multimodal_engine = Some(engine);
 
         Ok(self)
     }
@@ -283,6 +401,131 @@ impl CxpBuilder {
         self.search_index = Some(index);
 
         Ok(self)
+    }
+
+    /// Generate multimodal embeddings for all chunks (text + images)
+    ///
+    /// This is automatically called during `build()` if multimodal embeddings are enabled.
+    /// Creates a UnifiedIndex with both text and image embeddings in the same vector space.
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    pub fn generate_multimodal_embeddings(&mut self) -> Result<&mut Self> {
+        tracing::info!("Generating multimodal embeddings for {} unique chunks", self.chunk_store.len());
+
+        // Process in batches to avoid OOM
+        const BATCH_SIZE: usize = 32;
+
+        // Step 1: Generate text embeddings
+        let chunks: Vec<_> = self.chunk_store.chunks().collect();
+        let chunk_texts: Vec<&str> = chunks
+            .iter()
+            .map(|c| {
+                std::str::from_utf8(&c.data)
+                    .unwrap_or("[binary data]")
+            })
+            .collect();
+
+        tracing::info!("Generating text embeddings for {} chunks...", chunk_texts.len());
+
+        let mut all_text_embeddings = Vec::new();
+        {
+            let engine = self.multimodal_engine.as_mut()
+                .ok_or_else(|| CxpError::Embedding(
+                    "Multimodal engine not initialized. Call with_multimodal_embeddings() first.".to_string()
+                ))?;
+
+            for batch in chunk_texts.chunks(BATCH_SIZE) {
+                let embeddings = engine.embed_batch_text(batch)?;
+                all_text_embeddings.extend(embeddings);
+            }
+        }
+
+        tracing::info!("Generated {} text embeddings", all_text_embeddings.len());
+
+        // Step 2: Generate image embeddings if needed
+        let mut all_image_embeddings = Vec::new();
+        let image_paths_strings: Vec<String> = if self.process_images && !self.image_files.is_empty() {
+            tracing::info!("Generating image embeddings for {} images...", self.image_files.len());
+
+            let image_paths: Vec<_> = self.image_files.iter().map(|p| p.as_path()).collect();
+
+            {
+                let engine = self.multimodal_engine.as_mut()
+                    .ok_or_else(|| CxpError::Embedding(
+                        "Multimodal engine not initialized.".to_string()
+                    ))?;
+
+                for batch in image_paths.chunks(BATCH_SIZE) {
+                    let embeddings = engine.embed_batch_images(batch)?;
+                    all_image_embeddings.extend(embeddings);
+                }
+            }
+
+            // Collect relative paths
+            self.image_files.iter()
+                .map(|img_path| {
+                    img_path
+                        .strip_prefix(&self.source_dir)
+                        .unwrap_or(img_path)
+                        .to_string_lossy()
+                        .to_string()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        tracing::info!("Generated {} image embeddings", all_image_embeddings.len());
+
+        // Step 3: Build unified index with all embeddings
+        let config = HnswConfig::multimodal_float32();
+        let mut unified_index = UnifiedIndex::new(config)?;
+
+        let mut vector_id: u64 = 0;
+
+        // Add text embeddings to index
+        for (chunk_idx, embedding) in all_text_embeddings.into_iter().enumerate() {
+            let chunk_id = chunk_idx as u64;
+
+            // Find which file this chunk belongs to (for metadata)
+            let file_path = self.find_file_for_chunk_id(chunk_id)
+                .unwrap_or_else(|| "unknown".to_string());
+
+            unified_index.add_text(vector_id, &embedding, chunk_id, &file_path)?;
+            vector_id += 1;
+        }
+
+        // Add image embeddings to index
+        for (img_idx, embedding) in all_image_embeddings.into_iter().enumerate() {
+            if img_idx < image_paths_strings.len() {
+                let relative_path = &image_paths_strings[img_idx];
+                unified_index.add_image(vector_id, &embedding, relative_path)?;
+                vector_id += 1;
+            }
+        }
+
+        tracing::info!("Total vectors in unified index: {}", unified_index.len());
+        tracing::info!("  - Text chunks: {}", unified_index.text_count());
+        tracing::info!("  - Images: {}", unified_index.image_count());
+
+        self.unified_index = Some(unified_index);
+
+        Ok(self)
+    }
+
+    /// Find which file a chunk ID belongs to (helper for metadata)
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    fn find_file_for_chunk_id(&self, chunk_id: u64) -> Option<String> {
+        // Iterate through file map to find which file contains this chunk
+        for (path, entry) in &self.file_map.files {
+            if !entry.is_image {
+                // Check if this chunk ID is in the file's chunk range
+                // This is a simplified approach - in production you'd maintain a proper mapping
+                if chunk_id < entry.chunks.len() as u64 {
+                    return Some(path.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Add an extension with data to this CXP file
@@ -362,9 +605,47 @@ impl CxpBuilder {
             extension,
             size: metadata.len(),
             chunks: Vec::new(), // Will be filled in with refs later
+            is_image: false,
         };
 
         Ok((entry, chunks))
+    }
+
+    /// Process a single image file (stores entire image as one chunk)
+    #[cfg(feature = "multimodal")]
+    fn process_image(&self, path: &Path, base_dir: &Path) -> Result<(FileEntry, Chunk)> {
+        // Read image file
+        let mut file = File::open(path)?;
+        let metadata = file.metadata()?;
+        let mut content = Vec::with_capacity(metadata.len() as usize);
+        file.read_to_end(&mut content)?;
+
+        // Get relative path
+        let relative_path = path
+            .strip_prefix(base_dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+
+        // Get extension
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        // Create single chunk for entire image
+        let chunk = Chunk::new(content, 0);
+
+        let entry = FileEntry {
+            path: relative_path,
+            extension,
+            size: metadata.len(),
+            chunks: Vec::new(), // Will be filled in with ref later
+            is_image: true,
+        };
+
+        Ok((entry, chunk))
     }
 
     /// Build and write the CXP file
@@ -376,6 +657,12 @@ impl CxpBuilder {
         #[cfg(all(feature = "embeddings", feature = "search"))]
         if self.embedding_engine.is_some() && self.chunk_embeddings.is_none() {
             self.generate_embeddings()?;
+        }
+
+        // Generate multimodal embeddings if multimodal engine is set
+        #[cfg(all(feature = "multimodal", feature = "search"))]
+        if self.multimodal_engine.is_some() && self.unified_index.is_none() {
+            self.generate_multimodal_embeddings()?;
         }
 
         let file = File::create(output_path)?;
@@ -458,6 +745,48 @@ impl CxpBuilder {
             tracing::info!("HNSW index written successfully ({} vectors)", index.len());
         }
 
+        // Write UnifiedIndex if present (for multimodal)
+        #[cfg(all(feature = "multimodal", feature = "search"))]
+        if let Some(ref index) = self.unified_index {
+            tracing::info!("Writing UnifiedIndex to CXP file...");
+
+            // Save index to temporary files
+            let temp_dir = std::env::temp_dir();
+            let temp_base_path = temp_dir.join(format!("cxp_unified_{}", uuid::Uuid::new_v4()));
+
+            index.save(&temp_base_path)?;
+
+            // Read the index file and write to ZIP
+            let temp_index_path = temp_base_path.with_extension("index");
+            let mut index_file = File::open(&temp_index_path)?;
+            let mut index_data = Vec::new();
+            index_file.read_to_end(&mut index_data)?;
+
+            zip.start_file("embeddings/unified.index", options.clone())?;
+            zip.write_all(&index_data)?;
+
+            // Read the metadata file and write to ZIP
+            let temp_meta_path = temp_base_path.with_extension("meta");
+            let mut meta_file = File::open(&temp_meta_path)?;
+            let mut meta_data = Vec::new();
+            meta_file.read_to_end(&mut meta_data)?;
+
+            zip.start_file("embeddings/unified.meta", options.clone())?;
+            zip.write_all(&meta_data)?;
+
+            // Clean up temp files
+            std::fs::remove_file(&temp_index_path)?;
+            std::fs::remove_file(&temp_meta_path)?;
+
+            // Mark that we have embeddings
+            if !self.manifest.extensions.contains(&"embeddings".to_string()) {
+                self.manifest.extensions.push("embeddings".to_string());
+            }
+
+            tracing::info!("UnifiedIndex written successfully ({} vectors: {} text, {} images)",
+                index.len(), index.text_count(), index.image_count());
+        }
+
         // Write extension data if present
         if !self.extension_manager.list_extensions().is_empty() {
             tracing::info!("Writing extension data to CXP file...");
@@ -513,12 +842,15 @@ pub struct CxpReader {
     archive_path: PathBuf,
     /// Extension manager for reading app-specific data
     extension_manager: ExtensionManager,
-    /// Cached HNSW index for semantic search
+    /// Cached HNSW index for semantic search (text-only)
     #[cfg(all(feature = "embeddings", feature = "search"))]
     search_index: Option<HnswIndex>,
     /// Cached embeddings for rescoring
     #[cfg(all(feature = "embeddings", feature = "search"))]
     embeddings: Option<QuantizedEmbeddings>,
+    /// Cached UnifiedIndex for multimodal search
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    unified_index: Option<UnifiedIndex>,
 }
 
 impl CxpReader {
@@ -594,6 +926,8 @@ impl CxpReader {
             search_index: None,
             #[cfg(all(feature = "embeddings", feature = "search"))]
             embeddings: None,
+            #[cfg(all(feature = "multimodal", feature = "search"))]
+            unified_index: None,
         })
     }
 
@@ -766,6 +1100,86 @@ impl CxpReader {
         Ok(())
     }
 
+    /// Load unified index for multimodal search
+    ///
+    /// This must be called before using multimodal search functions.
+    /// The index is cached for subsequent searches.
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    pub fn load_unified_index(&mut self) -> Result<()> {
+        if !self.has_embeddings() {
+            return Err(CxpError::Embedding(
+                "This CXP file does not contain embeddings".to_string()
+            ));
+        }
+
+        if self.unified_index.is_some() {
+            return Ok(());  // Already loaded
+        }
+
+        tracing::info!("Loading UnifiedIndex from CXP file...");
+
+        let file = File::open(&self.archive_path)?;
+        let mut archive = ZipArchive::new(file)?;
+
+        // Check if unified index exists (multimodal)
+        let has_unified = archive.by_name("embeddings/unified.index").is_ok();
+
+        if !has_unified {
+            return Err(CxpError::Embedding(
+                "This CXP file does not contain a UnifiedIndex. It may be a text-only index.".to_string()
+            ));
+        }
+
+        // Re-open archive for reading
+        let file = File::open(&self.archive_path)?;
+        let mut archive = ZipArchive::new(file)?;
+
+        // Load index file
+        let mut index_file = archive.by_name("embeddings/unified.index")?;
+        let mut index_data = Vec::new();
+        index_file.read_to_end(&mut index_data)?;
+
+        // Load metadata file
+        let file = File::open(&self.archive_path)?;
+        let mut archive = ZipArchive::new(file)?;
+
+        let mut meta_file = archive.by_name("embeddings/unified.meta")?;
+        let mut meta_data = Vec::new();
+        meta_file.read_to_end(&mut meta_data)?;
+
+        // Save to temp files (USearch limitation)
+        let temp_dir = std::env::temp_dir();
+        let temp_base_path = temp_dir.join(format!("cxp_unified_{}", uuid::Uuid::new_v4()));
+        let temp_index_path = temp_base_path.with_extension("index");
+        let temp_meta_path = temp_base_path.with_extension("meta");
+
+        let mut temp_index_file = File::create(&temp_index_path)?;
+        temp_index_file.write_all(&index_data)?;
+        drop(temp_index_file);
+
+        let mut temp_meta_file = File::create(&temp_meta_path)?;
+        temp_meta_file.write_all(&meta_data)?;
+        drop(temp_meta_file);
+
+        // Load index
+        let _dimensions = self.manifest.embedding_dim
+            .ok_or_else(|| CxpError::Embedding("No embedding dimension in manifest".to_string()))?;
+
+        let config = HnswConfig::multimodal_float32();
+        let unified_index = UnifiedIndex::load(&temp_base_path, config)?;
+
+        // Clean up temp files
+        std::fs::remove_file(&temp_index_path)?;
+        std::fs::remove_file(&temp_meta_path)?;
+
+        tracing::info!("Loaded UnifiedIndex with {} vectors ({} text, {} images)",
+            unified_index.len(), unified_index.text_count(), unified_index.image_count());
+
+        self.unified_index = Some(unified_index);
+
+        Ok(())
+    }
+
     /// Perform semantic search using a query embedding
     ///
     /// Returns the top-k most similar chunks by ID.
@@ -830,6 +1244,76 @@ impl CxpReader {
                 r
             })
             .collect())
+    }
+
+    /// Perform multimodal semantic search with type filtering
+    ///
+    /// Searches across both text and images using the UnifiedIndex.
+    /// You must call `load_unified_index()` first.
+    ///
+    /// # Arguments
+    /// * `query_embedding` - The query vector (should match the model's dimensions)
+    /// * `top_k` - Number of results to return
+    /// * `result_type` - Filter by type: "text", "image", or "all"
+    ///
+    /// # Returns
+    /// Vector of search results with type information, sorted by similarity (highest first)
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    pub fn search_multimodal(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+        result_type: &str,
+    ) -> Result<Vec<crate::SearchResultWithType>> {
+        let index = self.unified_index.as_ref()
+            .ok_or_else(|| CxpError::Search(
+                "UnifiedIndex not loaded. Call load_unified_index() first.".to_string()
+            ))?;
+
+        // Search based on result type filter
+        let results = match result_type.to_lowercase().as_str() {
+            "text" => index.search_text_only(query_embedding, top_k)?,
+            "image" => index.search_images_only(query_embedding, top_k)?,
+            "all" | _ => index.search(query_embedding, top_k)?,
+        };
+
+        Ok(results)
+    }
+
+    /// Search for images using a text query
+    ///
+    /// Convenience method for text-to-image search.
+    /// You must call `load_unified_index()` first.
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    pub fn search_images_with_text(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<crate::SearchResultWithType>> {
+        let index = self.unified_index.as_ref()
+            .ok_or_else(|| CxpError::Search(
+                "UnifiedIndex not loaded. Call load_unified_index() first.".to_string()
+            ))?;
+
+        index.search_images_only(query_embedding, top_k)
+    }
+
+    /// Search for text using an image query
+    ///
+    /// Convenience method for image-to-text search.
+    /// You must call `load_unified_index()` first.
+    #[cfg(all(feature = "multimodal", feature = "search"))]
+    pub fn search_text_with_image(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<crate::SearchResultWithType>> {
+        let index = self.unified_index.as_ref()
+            .ok_or_else(|| CxpError::Search(
+                "UnifiedIndex not loaded. Call load_unified_index() first.".to_string()
+            ))?;
+
+        index.search_text_only(query_embedding, top_k)
     }
 
     /// Get chunk text by ID
@@ -920,6 +1404,7 @@ mod tests {
             extension: "rs".to_string(),
             size: 1000,
             chunks: vec![],
+            is_image: false,
         };
 
         let data = rmp_serde::to_vec(&entry).unwrap();

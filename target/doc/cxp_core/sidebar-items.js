@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["AVG_CHUNK_SIZE","MAX_CHUNK_SIZE","MIN_CHUNK_SIZE","TEXT_EXTENSIONS","VERSION"],"fn":["is_text_file"],"mod":["chunker","compress","dedup","embeddings","error","extensions","format","manifest","semantic"]};

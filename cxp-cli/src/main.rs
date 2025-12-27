@@ -1,11 +1,12 @@
 //! CXP CLI - Build and query CXP files
 //!
 //! Usage:
-//!   cxp build <source-dir> <output.cxp>
+//!   cxp build <source-dir> <output.cxp> [--embeddings --model <path>]
 //!   cxp info <file.cxp>
 //!   cxp list <file.cxp>
 //!   cxp extract <file.cxp> <file-path> [output]
 //!   cxp query <file.cxp> <search-term> [--top-k N]
+//!   cxp search <file.cxp> <query> [--top-k N] --model <path>  (requires embeddings feature)
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -37,6 +38,14 @@ enum Commands {
 
         /// Output CXP file path
         output: PathBuf,
+
+        /// Generate embeddings for semantic search
+        #[arg(long)]
+        embeddings: bool,
+
+        /// Path to embedding model directory (ONNX)
+        #[arg(long)]
+        model: Option<PathBuf>,
     },
 
     /// Show information about a CXP file
@@ -67,7 +76,7 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Query files in a CXP archive
+    /// Query files in a CXP archive (keyword search)
     Query {
         /// CXP file to query
         file: PathBuf,
@@ -82,6 +91,24 @@ enum Commands {
         /// Case insensitive search
         #[arg(short = 'i', long)]
         ignore_case: bool,
+    },
+
+    /// Semantic search in a CXP archive (requires embeddings)
+    #[cfg(all(feature = "embeddings", feature = "search"))]
+    Search {
+        /// CXP file to search
+        file: PathBuf,
+
+        /// Search query (natural language)
+        query: String,
+
+        /// Number of results
+        #[arg(short = 'k', long, default_value = "10")]
+        top_k: usize,
+
+        /// Path to embedding model directory (ONNX)
+        #[arg(long)]
+        model: Option<PathBuf>,
     },
 }
 
@@ -101,20 +128,41 @@ fn main() -> Result<()> {
         .init();
 
     match cli.command {
-        Commands::Build { source, output } => build_cxp(&source, &output),
+        Commands::Build { source, output, embeddings, model } => {
+            build_cxp(&source, &output, embeddings, model.as_deref())
+        }
         Commands::Info { file } => show_info(&file),
         Commands::List { file, long } => list_files(&file, long),
         Commands::Extract { file, path, output } => extract_file(&file, &path, output.as_deref()),
         Commands::Query { file, query, top_k, ignore_case } => {
             query_files(&file, &query, top_k, ignore_case)
         }
+        #[cfg(all(feature = "embeddings", feature = "search"))]
+        Commands::Search { file, query, top_k, model } => {
+            search_semantic(&file, &query, top_k, model.as_deref())
+        }
     }
 }
 
-fn build_cxp(source: &PathBuf, output: &PathBuf) -> Result<()> {
+fn build_cxp(
+    source: &PathBuf,
+    output: &PathBuf,
+    embeddings: bool,
+    #[allow(unused_variables)]
+    model: Option<&std::path::Path>,
+) -> Result<()> {
     println!("Building CXP file...");
     println!("  Source: {}", source.display());
     println!("  Output: {}", output.display());
+
+    #[cfg(all(feature = "embeddings", feature = "search"))]
+    if embeddings {
+        println!("  Embeddings: enabled");
+        if let Some(model_path) = model {
+            println!("  Model: {}", model_path.display());
+        }
+    }
+
     println!();
 
     let start = Instant::now();
@@ -124,7 +172,32 @@ fn build_cxp(source: &PathBuf, output: &PathBuf) -> Result<()> {
         .scan()
         .context("Failed to scan directory")?
         .process()
-        .context("Failed to process files")?
+        .context("Failed to process files")?;
+
+    // Generate embeddings if requested
+    #[cfg(all(feature = "embeddings", feature = "search"))]
+    if embeddings {
+        use cxp_core::EmbeddingModel;
+
+        let model_path = model.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Model path is required for embeddings. Use --model <path> to specify the model directory."
+            )
+        })?;
+
+        builder
+            .with_embeddings(model_path, EmbeddingModel::MiniLM)
+            .context("Failed to initialize embeddings")?;
+    }
+
+    #[cfg(not(all(feature = "embeddings", feature = "search")))]
+    if embeddings {
+        return Err(anyhow::anyhow!(
+            "Embeddings feature is not enabled. Rebuild cxp-cli with --features embeddings,search"
+        ));
+    }
+
+    builder
         .build(output)
         .context("Failed to build CXP file")?;
 
@@ -189,6 +262,16 @@ fn show_info(file: &PathBuf) -> Result<()> {
     if !manifest.extensions.is_empty() {
         println!();
         println!("Extensions: {}", manifest.extensions.join(", "));
+    }
+
+    // Show embedding info if present
+    if let Some(ref model) = manifest.embedding_model {
+        println!();
+        println!("Embeddings:");
+        println!("  Model:      {}", model);
+        if let Some(dim) = manifest.embedding_dim {
+            println!("  Dimensions: {}", dim);
+        }
     }
 
     Ok(())
@@ -358,6 +441,95 @@ fn query_files(file: &PathBuf, query: &str, top_k: usize, ignore_case: bool) -> 
 
         if result.line_numbers.len() > 3 {
             println!("    ... and {} more lines", result.line_numbers.len() - 3);
+        }
+
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Perform semantic search using embeddings
+#[cfg(all(feature = "embeddings", feature = "search"))]
+fn search_semantic(
+    file: &PathBuf,
+    query: &str,
+    top_k: usize,
+    model: Option<&std::path::Path>,
+) -> Result<()> {
+    use cxp_core::{EmbeddingEngine, EmbeddingModel};
+
+    println!("Semantic search: \"{}\"", query);
+    println!();
+
+    // Open CXP file
+    let mut reader = CxpReader::open(file).context("Failed to open CXP file")?;
+
+    // Check if file has embeddings
+    if !reader.has_embeddings() {
+        return Err(anyhow::anyhow!(
+            "This CXP file has no embeddings. Use 'cxp build --embeddings --model <path>' to create one."
+        ));
+    }
+
+    println!("Loading embeddings...");
+    reader.load_embeddings().context("Failed to load embeddings")?;
+
+    // Load embedding model for query encoding
+    let model_path = model.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Model path is required for search. Use --model <path> to specify the model directory."
+        )
+    })?;
+
+    println!("Loading embedding model...");
+    let engine = EmbeddingEngine::load(model_path, EmbeddingModel::MiniLM)
+        .context("Failed to load embedding model")?;
+
+    // Generate query embedding
+    println!("Encoding query...");
+    let query_embedding = engine.embed(query).context("Failed to encode query")?;
+
+    // Search
+    println!("Searching...");
+    let results = reader
+        .search_semantic(&query_embedding, top_k)
+        .context("Search failed")?;
+
+    if results.is_empty() {
+        println!();
+        println!("No results found.");
+        return Ok(());
+    }
+
+    println!();
+    println!("Found {} results:", results.len());
+    println!();
+
+    // Display results
+    for (i, result) in results.iter().enumerate() {
+        println!("{}. Chunk ID: {} (similarity: {:.4})", i + 1, result.id, -result.distance);
+
+        // Try to get chunk content
+        match reader.get_chunk_text(result.id) {
+            Ok(text) => {
+                // Show first few lines as preview
+                let lines: Vec<&str> = text.lines().take(5).collect();
+                for line in lines {
+                    let truncated = if line.len() > 100 {
+                        format!("{}...", &line[..97])
+                    } else {
+                        line.to_string()
+                    };
+                    println!("    {}", truncated);
+                }
+                if text.lines().count() > 5 {
+                    println!("    ... ({} more lines)", text.lines().count() - 5);
+                }
+            }
+            Err(_) => {
+                println!("    [Could not retrieve chunk content]");
+            }
         }
 
         println!();

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["chunk_content","compute_hash"],"struct":["Chunk","ChunkRef"]};

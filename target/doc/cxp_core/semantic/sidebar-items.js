@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["deserialize_binary_embeddings","deserialize_int8_embeddings","serialize_binary_embeddings","serialize_int8_embeddings"],"struct":["EmbeddingStore"]};

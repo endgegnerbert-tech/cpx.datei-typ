@@ -2,37 +2,39 @@
 
 ---
 
-## 📊 AKTUELLER FORTSCHRITT (Stand: 26. Dezember 2025)
+## 📊 AKTUELLER FORTSCHRITT (Stand: 27. Dezember 2025)
 
 ```
 Phase 1: Core Library      ████████████████████ 100% ✅
-Phase 2: Embeddings/Search ████████████████░░░░  80% 🔄
-Phase 3: Extension System  ░░░░░░░░░░░░░░░░░░░░   0% ⏳
+Phase 2: Embeddings/Search ████████████████████ 100% ✅
+Phase 3: Extension System  ████████████████████ 100% ✅
 Phase 4: Multi-Platform    ░░░░░░░░░░░░░░░░░░░░   0% ⏳
 Phase 5: ContextAI         ░░░░░░░░░░░░░░░░░░░░   0% ⏳
 
-Gesamt:                    ████████░░░░░░░░░░░░  36%
+Gesamt:                    ████████████░░░░░░░░  60%
 ```
 
 ### ✅ Was funktioniert JETZT:
 - `cxp build /path output.cxp` - CXP-Dateien erstellen
+- `cxp build --embeddings --model <path>` - Mit Embeddings
 - `cxp info file.cxp` - Statistiken anzeigen
 - `cxp list file.cxp` - Dateien auflisten
 - `cxp extract file.cxp` - Dateien extrahieren
+- `cxp query file.cxp "term"` - Keyword-Suche
+- `cxp search file.cxp "query"` - Semantische Suche (mit Embeddings)
 - FastCDC Chunking mit Deduplication
 - Zstandard Kompression (85% kleiner als JSON!)
 - Binary Embeddings (32x kleiner als float32)
 - Int8 Embeddings für Rescoring
 - HNSW Index mit Hamming Distance
+- **Extension System für ContextAI**
 - **15/15 Integration Tests bestanden**
 
 ### ⏳ Was fehlt noch:
-- Query Engine (`cxp query file.cxp "search term"`)
-- Embeddings in CXP-Datei speichern
-- Extension System für ContextAI
 - WASM Build für Browser
 - Node.js/Python Bindings
 - SQLite Migration Tool
+- Tauri Integration
 
 ### 📁 Implementierte Module (cxp-core/src/):
 ```
@@ -46,6 +48,9 @@ error.rs            ✅ CxpError Enum (12 Varianten)
 embeddings.rs       ✅ ONNX Runtime Engine (ort 2.0.0-rc.10)
 embeddings_tract.rs ✅ Tract Engine für WASM (tract-onnx 0.22)
 index.rs            ✅ HNSW Index (usearch 2.15)
+semantic.rs         ✅ NEU: Embeddings Storage & Serialization
+extensions.rs       ✅ NEU: Extension System
+contextai.rs        ✅ NEU: ContextAI Extension (Conversations, Habits, Settings)
 ```
 
 ---
@@ -427,7 +432,7 @@ Optional: Claude für Top-3 Ergebnisse ($0.01/query)
 - [x] ZIP Container Read/Write
 - [x] CLI: `cxp build`, `cxp info`, `cxp list`, `cxp extract`
 
-### Phase 2: Embeddings & Search 🔄 80% FERTIG
+### Phase 2: Embeddings & Search ✅ KOMPLETT
 - [x] ONNX Runtime Integration (`ort = "2.0.0-rc.10"`)
 - [x] WASM-Alternative mit tract-onnx (`tract-onnx = "0.22"`)
 - [x] Model Support (all-MiniLM-L6-v2, EmbeddingGemma)
@@ -436,15 +441,21 @@ Optional: Claude für Top-3 Ergebnisse ($0.01/query)
 - [x] HNSW Index Build (`usearch = "2.15"`)
 - [x] Hamming Distance für Binary Embeddings
 - [x] **15/15 Integration Tests bestanden**
-- [ ] Query Engine: `cxp query file.cxp "search term"`
-- [ ] Embeddings in CXP-Datei integrieren
+- [x] Query Engine: `cxp query file.cxp "search term"` (Keyword-Suche)
+- [x] Semantic Search: `cxp search file.cxp "query"` (mit Embeddings)
+- [x] Embeddings in CXP-Datei integrieren (semantic.rs)
+- [x] EmbeddingStore für Binary + Int8 Serialization
 
-### Phase 3: Extension System ⏳
-- [ ] Namespace System für Extensions
-- [ ] ContextAI Extension Schema
-- [ ] Conversations Storage
-- [ ] Habits/Dictionary/Settings Storage
-- [ ] CLI: `cxp ext add contextai`
+### Phase 3: Extension System ✅ KOMPLETT
+- [x] Extension Trait & ExtensionManager
+- [x] Namespace System für Extensions
+- [x] ContextAI Extension Schema (contextai.rs)
+- [x] Conversations Storage (mit ChatMessages)
+- [x] Habits/Dictionary/Settings Storage
+- [x] WatchedFolders Storage
+- [x] CxpBuilder.add_extension() Integration
+- [x] CxpReader.list_extensions() / read_extension()
+- [x] Dokumentation: EXTENSIONS.md
 
 ### Phase 4: Multi-Platform ⏳
 - [ ] WASM Build (wasm-pack) - tract-onnx Grundlage vorhanden!

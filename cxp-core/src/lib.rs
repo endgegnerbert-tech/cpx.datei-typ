@@ -9,8 +9,12 @@ pub mod compress;
 pub mod format;
 pub mod manifest;
 pub mod error;
+pub mod extensions;
 
-#[cfg(feature = "embeddings")]
+#[cfg(feature = "contextai")]
+pub mod contextai;
+
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
 pub mod embeddings;
 
 #[cfg(feature = "embeddings-wasm")]
@@ -19,9 +23,16 @@ pub mod embeddings_tract;
 #[cfg(feature = "search")]
 pub mod index;
 
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+pub mod semantic;
+
 pub use error::{CxpError, Result};
 pub use manifest::Manifest;
 pub use format::{CxpFile, CxpBuilder, CxpReader};
+pub use extensions::{Extension, ExtensionManager, ExtensionManifest};
+
+#[cfg(feature = "contextai")]
+pub use contextai::ContextAIExtension;
 
 // Export common embedding types from either feature
 #[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
@@ -38,6 +49,16 @@ pub use embeddings_tract::TractEmbeddingEngine;
 // Export search types
 #[cfg(feature = "search")]
 pub use index::{HnswIndex, HnswConfig, DistanceMetric, SearchResult};
+
+// Export semantic storage types
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+pub use semantic::{
+    EmbeddingStore,
+    serialize_binary_embeddings,
+    deserialize_binary_embeddings,
+    serialize_int8_embeddings,
+    deserialize_int8_embeddings,
+};
 
 /// CXP Format Version
 pub const VERSION: &str = "1.0.0";

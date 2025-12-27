@@ -11,6 +11,7 @@ default = []
 embeddings = ["ort", "ndarray", "tokenizers", "num_cpus"]
 embeddings-wasm = ["tract-onnx", "ndarray", "tokenizers"]
 search = ["usearch"]
+contextai = []
 
 [dependencies]
 # Core

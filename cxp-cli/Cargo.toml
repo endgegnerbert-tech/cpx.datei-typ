@@ -10,6 +10,12 @@ description = "CXP CLI - Build and query CXP files"
 name = "cxp"
 path = "src/main.rs"
 
+[features]
+default = []
+embeddings = ["cxp-core/embeddings"]
+search = ["cxp-core/search"]
+full = ["embeddings", "search"]
+
 [dependencies]
 cxp-core = { path = "../cxp-core" }
 

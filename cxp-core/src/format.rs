@@ -21,10 +21,20 @@ use crate::chunker::{chunk_content, Chunk, ChunkRef};
 use crate::compress::{compress, decompress};
 use crate::dedup::ChunkStore;
 use crate::manifest::Manifest;
+use crate::extensions::{Extension, ExtensionManager};
 use crate::{is_text_file, CxpError, Result};
 
+// Embedding types (shared across embeddings and search features)
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+use crate::{BinaryEmbedding, Int8Embedding, QuantizedEmbeddings};
+
+// Search-specific types
 #[cfg(all(feature = "embeddings", feature = "search"))]
-use crate::{BinaryEmbedding, EmbeddingEngine, EmbeddingModel, HnswConfig, HnswIndex, Int8Embedding, QuantizedEmbeddings};
+use crate::{EmbeddingEngine, EmbeddingModel, HnswConfig, HnswIndex};
+
+// Serialization functions for embeddings
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+use crate::{serialize_binary_embeddings, deserialize_binary_embeddings, serialize_int8_embeddings, deserialize_int8_embeddings};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -77,6 +87,8 @@ pub struct CxpBuilder {
     file_map: FileMap,
     /// Chunk store with deduplication
     chunk_store: ChunkStore,
+    /// Extension manager for app-specific data
+    extension_manager: ExtensionManager,
     /// Embedding engine (optional)
     #[cfg(all(feature = "embeddings", feature = "search"))]
     embedding_engine: Option<EmbeddingEngine>,
@@ -97,6 +109,7 @@ impl CxpBuilder {
             manifest: Manifest::new(),
             file_map: FileMap::default(),
             chunk_store: ChunkStore::new(),
+            extension_manager: ExtensionManager::new(),
             #[cfg(all(feature = "embeddings", feature = "search"))]
             embedding_engine: None,
             #[cfg(all(feature = "embeddings", feature = "search"))]
@@ -272,6 +285,53 @@ impl CxpBuilder {
         Ok(self)
     }
 
+    /// Add an extension with data to this CXP file
+    ///
+    /// The extension will be registered and its data will be stored in the
+    /// extensions/{namespace}/ directory in the CXP file.
+    ///
+    /// # Arguments
+    /// * `ext` - An object implementing the Extension trait
+    /// * `data` - A HashMap of file names to their data (e.g., "conversations.msgpack" -> bytes)
+    ///
+    /// # Example
+    /// ```ignore
+    /// use std::collections::HashMap;
+    ///
+    /// let mut builder = CxpBuilder::new("./src");
+    /// let contextai = ContextAIExtension::new();
+    /// let data = contextai.to_extension_data()?;
+    ///
+    /// builder.add_extension(&contextai, data)?;
+    /// ```
+    pub fn add_extension<E: Extension + Clone>(
+        &mut self,
+        ext: &E,
+        data: HashMap<String, Vec<u8>>,
+    ) -> Result<&mut Self> {
+        // Register the extension
+        self.extension_manager.register(ext.clone());
+
+        // Add all data files
+        for (key, bytes) in data {
+            self.extension_manager.write_data(ext.namespace(), &key, &bytes)?;
+        }
+
+        // Update manifest to include this extension
+        if !self.manifest.extensions.contains(&ext.namespace().to_string()) {
+            self.manifest.extensions.push(ext.namespace().to_string());
+        }
+
+        tracing::info!(
+            "Added extension '{}' (v{}) with {} data files",
+            ext.namespace(),
+            ext.version(),
+            self.extension_manager.list_data_keys(ext.namespace()).len()
+        );
+
+        Ok(self)
+    }
+
     /// Process a single file
     fn process_file(&self, path: &Path, base_dir: &Path) -> Result<(FileEntry, Vec<Chunk>)> {
         // Read file content
@@ -398,6 +458,33 @@ impl CxpBuilder {
             tracing::info!("HNSW index written successfully ({} vectors)", index.len());
         }
 
+        // Write extension data if present
+        if !self.extension_manager.list_extensions().is_empty() {
+            tracing::info!("Writing extension data to CXP file...");
+
+            // Write extension manifests
+            for manifest in self.extension_manager.manifests().values() {
+                let manifest_path = format!("extensions/{}/manifest.msgpack", manifest.namespace);
+                let manifest_data = manifest.to_msgpack()?;
+                zip.start_file(&manifest_path, options.clone())?;
+                zip.write_all(&manifest_data)?;
+            }
+
+            // Write extension data files
+            for (namespace, data_map) in self.extension_manager.all_data() {
+                for (key, data) in data_map {
+                    let data_path = format!("extensions/{}/{}", namespace, key);
+                    zip.start_file(&data_path, options.clone())?;
+                    zip.write_all(data)?;
+                }
+            }
+
+            tracing::info!(
+                "Written {} extensions to CXP file",
+                self.extension_manager.list_extensions().len()
+            );
+        }
+
         zip.finish()?;
 
         // Update manifest with final size
@@ -424,6 +511,8 @@ pub struct CxpReader {
     pub file_map: FileMap,
     /// ZIP archive handle
     archive_path: PathBuf,
+    /// Extension manager for reading app-specific data
+    extension_manager: ExtensionManager,
     /// Cached HNSW index for semantic search
     #[cfg(all(feature = "embeddings", feature = "search"))]
     search_index: Option<HnswIndex>,
@@ -455,10 +544,52 @@ impl CxpReader {
             rmp_serde::from_slice(&data)?
         };
 
+        // Load extension data if present
+        let mut extension_manager = ExtensionManager::new();
+
+        // Iterate through all files in the ZIP archive to find extensions
+        for i in 0..archive.len() {
+            let file = archive.by_index(i)?;
+            let file_name = file.name().to_string();
+
+            // Check if this is an extension file
+            if file_name.starts_with("extensions/") {
+                let parts: Vec<&str> = file_name.split('/').collect();
+                if parts.len() >= 3 {
+                    let namespace = parts[1];
+                    let file_key = parts[2..].join("/");
+
+                    // Read the file data
+                    let mut data = Vec::new();
+                    drop(file); // Close the borrowed file
+                    let mut file = archive.by_index(i)?;
+                    file.read_to_end(&mut data)?;
+
+                    if file_key == "manifest.msgpack" {
+                        // Load extension manifest
+                        if let Ok(ext_manifest) = crate::extensions::ExtensionManifest::from_msgpack(&data) {
+                            extension_manager.load_manifest(ext_manifest);
+                        }
+                    } else {
+                        // Load extension data
+                        extension_manager.load_data(namespace.to_string(), file_key, data);
+                    }
+                }
+            }
+        }
+
+        if !extension_manager.list_extensions().is_empty() {
+            tracing::info!(
+                "Loaded {} extensions from CXP file",
+                extension_manager.list_extensions().len()
+            );
+        }
+
         Ok(Self {
             manifest,
             file_map,
             archive_path: path,
+            extension_manager,
             #[cfg(all(feature = "embeddings", feature = "search"))]
             search_index: None,
             #[cfg(all(feature = "embeddings", feature = "search"))]
@@ -501,16 +632,61 @@ impl CxpReader {
     }
 
     /// Check if this CXP file has embeddings
-    #[cfg(all(feature = "embeddings", feature = "search"))]
+    #[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "search"))]
     pub fn has_embeddings(&self) -> bool {
         self.manifest.embedding_model.is_some()
             && self.manifest.extensions.contains(&"embeddings".to_string())
     }
 
     /// Check if embeddings are available (without feature flags - returns false)
-    #[cfg(not(all(feature = "embeddings", feature = "search")))]
+    #[cfg(not(any(feature = "embeddings", feature = "embeddings-wasm", feature = "search")))]
     pub fn has_embeddings(&self) -> bool {
         false
+    }
+
+    /// Load embeddings as an EmbeddingStore without caching
+    ///
+    /// Returns the embeddings without loading the HNSW index or caching them.
+    /// Use this if you only need to access the embeddings directly.
+    #[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
+    pub fn get_embedding_store(&self) -> Result<crate::EmbeddingStore> {
+        if !self.has_embeddings() {
+            return Err(CxpError::Embedding(
+                "This CXP file does not contain embeddings".to_string()
+            ));
+        }
+
+        tracing::info!("Loading embeddings from CXP file...");
+
+        let file = File::open(&self.archive_path)?;
+        let mut archive = ZipArchive::new(file)?;
+
+        // Load binary embeddings
+        let binary_embeddings = {
+            let mut file = archive.by_name("embeddings/binary.bin")?;
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)?;
+            deserialize_binary_embeddings(&data)?
+        };
+
+        // Load int8 embeddings
+        let int8_embeddings = {
+            let mut file = archive.by_name("embeddings/int8.bin")?;
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)?;
+            deserialize_int8_embeddings(&data)?
+        };
+
+        let dimensions = self.manifest.embedding_dim
+            .ok_or_else(|| CxpError::Embedding("No embedding dimension in manifest".to_string()))?;
+
+        tracing::info!("Loaded {} embeddings", binary_embeddings.len());
+
+        Ok(crate::EmbeddingStore::new(
+            binary_embeddings,
+            int8_embeddings,
+            dimensions,
+        ))
     }
 
     /// Load embeddings and search index into memory
@@ -558,7 +734,7 @@ impl CxpReader {
         });
 
         // Load HNSW index
-        let mut file = File::open(&self.archive_path)?;
+        let file = File::open(&self.archive_path)?;
         let mut archive = ZipArchive::new(file)?;
 
         let mut index_file = archive.by_name("embeddings/index.hnsw")?;
@@ -682,6 +858,54 @@ impl CxpReader {
 
         String::from_utf8(decompressed)
             .map_err(|e| CxpError::Serialization(format!("Invalid UTF-8 in chunk: {}", e)))
+    }
+
+    /// List all extension namespaces in this CXP file
+    ///
+    /// Returns a vector of extension namespace strings (e.g., ["contextai", "custom"])
+    pub fn list_extensions(&self) -> Vec<String> {
+        self.extension_manager
+            .list_extensions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// Read extension data from the CXP file
+    ///
+    /// # Arguments
+    /// * `namespace` - The extension namespace (e.g., "contextai")
+    /// * `key` - The data key within the namespace (e.g., "conversations.msgpack")
+    ///
+    /// # Returns
+    /// The raw bytes of the extension data file
+    ///
+    /// # Example
+    /// ```ignore
+    /// let reader = CxpReader::open("example.cxp")?;
+    /// let data = reader.read_extension("contextai", "conversations.msgpack")?;
+    /// let conversations: Vec<Conversation> = rmp_serde::from_slice(&data)?;
+    /// ```
+    pub fn read_extension(&self, namespace: &str, key: &str) -> Result<Vec<u8>> {
+        self.extension_manager.read_data(namespace, key)
+    }
+
+    /// Get extension manifest for a specific namespace
+    ///
+    /// Returns the extension's metadata including version and description
+    pub fn get_extension_manifest(&self, namespace: &str) -> Option<&crate::extensions::ExtensionManifest> {
+        self.extension_manager.get_manifest(namespace)
+    }
+
+    /// List all data keys for a specific extension namespace
+    ///
+    /// Returns a vector of data file names within the extension
+    pub fn list_extension_keys(&self, namespace: &str) -> Vec<String> {
+        self.extension_manager
+            .list_data_keys(namespace)
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 }
 

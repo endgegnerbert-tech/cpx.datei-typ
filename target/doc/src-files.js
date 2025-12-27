@@ -1,0 +1,2 @@
+createSrcSidebar('[["cxp_core",["",[],["chunker.rs","compress.rs","dedup.rs","embeddings.rs","error.rs","extensions.rs","format.rs","lib.rs","manifest.rs","semantic.rs"]]]]');
+//{"start":19,"fragment_lengths":[152]}

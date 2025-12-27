@@ -9,9 +9,11 @@
 //! - Int8 quantization for rescoring
 //! - Batch processing
 
-#[cfg(feature = "embeddings")]
+// Core types are available with either embeddings or embeddings-wasm
+#[cfg(any(feature = "embeddings", feature = "embeddings-wasm"))]
 use crate::{CxpError, Result};
 
+// ONNX-specific imports (only for native embeddings)
 #[cfg(feature = "embeddings")]
 use ndarray::{Array2, Axis};
 #[cfg(feature = "embeddings")]
@@ -50,7 +52,7 @@ impl EmbeddingModel {
 }
 
 /// Binary embedding (32x smaller than float32)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BinaryEmbedding {
     /// Packed bits - each bit represents sign of original value
     pub bits: Vec<u8>,
@@ -90,7 +92,7 @@ impl BinaryEmbedding {
 }
 
 /// Int8 embedding (4x smaller than float32)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Int8Embedding {
     /// Quantized values (-128 to 127)
     pub values: Vec<i8>,
@@ -263,7 +265,7 @@ impl EmbeddingEngine {
 }
 
 /// Batch embedding results with both binary and int8 representations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QuantizedEmbeddings {
     /// Binary embeddings for fast initial search
     pub binary: Vec<BinaryEmbedding>,

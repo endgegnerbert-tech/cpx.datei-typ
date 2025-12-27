@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "contextai")]
 use std::collections::HashMap;
 #[cfg(feature = "contextai")]
-use crate::{Result, CxpError};
+use crate::{Result, CxpError, Extension};
 
 /// A conversation in ContextAI
 #[cfg(feature = "contextai")]
@@ -374,6 +374,18 @@ impl ContextAIExtension {
 impl Default for ContextAIExtension {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Implement the Extension trait for ContextAI
+#[cfg(feature = "contextai")]
+impl Extension for ContextAIExtension {
+    fn namespace(&self) -> &str {
+        "contextai"
+    }
+
+    fn version(&self) -> &str {
+        "1.0.0"
     }
 }
 

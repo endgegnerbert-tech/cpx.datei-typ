@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ExtensionManager","ExtensionManifest"],"trait":["Extension"]};

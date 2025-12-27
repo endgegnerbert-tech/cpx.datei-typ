@@ -14,7 +14,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use cxp_core::{CxpBuilder, CxpReader};
     use cxp_core::contextai::{
-        ContextAIExtension, Conversation, ChatMessage, UserHabits,
+        ContextAIExtension, Conversation, ChatMessage, UserHabit,
     };
     use std::fs;
 
@@ -56,27 +56,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 role: "user".to_string(),
                 content: "How does the extension system work?".to_string(),
                 timestamp: "2025-01-15T10:01:00Z".to_string(),
+                referenced_files: vec![],
             },
             ChatMessage {
                 id: "msg-2".to_string(),
                 role: "assistant".to_string(),
                 content: "Extensions are stored in the extensions/ directory in the CXP file.".to_string(),
                 timestamp: "2025-01-15T10:01:30Z".to_string(),
+                referenced_files: vec![],
             },
         ],
     };
     contextai_ext.add_conversation(conv);
 
     // Set user habits
-    let habits = UserHabits {
-        preferred_language: "en".to_string(),
-        coding_style: Some("rustfmt".to_string()),
-        custom_instructions: vec![
-            "Use clear variable names".to_string(),
-            "Add documentation comments".to_string(),
-        ],
+    let habit = UserHabit {
+        id: "habit-1".to_string(),
+        habit_key: "preferred_language".to_string(),
+        habit_value: "en".to_string(),
+        confidence: 1.0,
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+        learned_from_message_id: None,
     };
-    contextai_ext.set_habits(habits);
+    contextai_ext.set_habit(habit);
 
     // Build the CXP file
     let mut builder = CxpBuilder::new(&temp_dir);
@@ -147,11 +149,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         println!("     - Habits:");
-        println!("       • Language: {}", restored_ext.get_habits().preferred_language);
-        println!("       • Custom instructions: {}", restored_ext.get_habits().custom_instructions.len());
-
-        for instruction in &restored_ext.get_habits().custom_instructions {
-            println!("         - {}", instruction);
+        println!("       • Total habits: {}", restored_ext.list_habits().len());
+        if let Some(lang_habit) = restored_ext.get_habit("preferred_language") {
+            println!("       • Language: {}", lang_habit.habit_value);
         }
 
         println!("     - Settings:");

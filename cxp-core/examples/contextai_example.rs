@@ -11,8 +11,8 @@
 #[cfg(feature = "contextai")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use cxp_core::contextai::{
-        ContextAIExtension, Conversation, ChatMessage, UserHabits,
-        WatchedFolder, AppSettings,
+        ContextAIExtension, Conversation, ChatMessage, UserHabit,
+        WatchedFolder, AppSettings, DictionaryEntry,
     };
 
     println!("=== ContextAI Extension Example ===\n");
@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         role: "user".to_string(),
         content: "What should we build next?".to_string(),
         timestamp: "2025-01-15T10:01:00Z".to_string(),
+        referenced_files: vec![],
     };
 
     let message2 = ChatMessage {
@@ -50,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         role: "assistant".to_string(),
         content: "Based on your codebase, I suggest focusing on...".to_string(),
         timestamp: "2025-01-15T10:01:30Z".to_string(),
+        referenced_files: vec![],
     };
 
     ext.add_message("conv-123", message1)?;
@@ -63,18 +65,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ============================================================
     println!("\n--- Setting User Habits ---");
 
-    let habits = UserHabits {
-        preferred_language: "de".to_string(),
-        coding_style: Some("tabs, no-semicolons".to_string()),
-        custom_instructions: vec![
-            "Always use TypeScript instead of JavaScript".to_string(),
-            "Prefer functional programming patterns".to_string(),
-        ],
+    let habit1 = UserHabit {
+        id: "habit-1".to_string(),
+        habit_key: "preferred_language".to_string(),
+        habit_value: "de".to_string(),
+        confidence: 0.9,
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+        learned_from_message_id: None,
     };
 
-    ext.set_habits(habits);
-    println!("User prefers language: {}", ext.get_habits().preferred_language);
-    println!("Custom instructions: {}", ext.get_habits().custom_instructions.len());
+    let habit2 = UserHabit {
+        id: "habit-2".to_string(),
+        habit_key: "coding_style".to_string(),
+        habit_value: "tabs, no-semicolons".to_string(),
+        confidence: 0.85,
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+        learned_from_message_id: None,
+    };
+
+    ext.set_habit(habit1);
+    ext.set_habit(habit2);
+    println!("Set {} habits", ext.list_habits().len());
+    if let Some(lang_habit) = ext.get_habit("preferred_language") {
+        println!("User prefers language: {} (confidence: {})", lang_habit.habit_value, lang_habit.confidence);
+    }
 
     // ============================================================
     // 3. Configure Settings
@@ -118,13 +132,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ============================================================
     println!("\n--- Managing Dictionary ---");
 
-    ext.add_to_dictionary("TypeScript".to_string());
-    ext.add_to_dictionary("Rust".to_string());
-    ext.add_to_dictionary("React".to_string());
+    let dict1 = DictionaryEntry {
+        id: "dict-1".to_string(),
+        term: "TypeScript".to_string(),
+        definition: "A typed superset of JavaScript".to_string(),
+        category: Some("Programming".to_string()),
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    };
 
-    println!("Dictionary has {} words", ext.get_dictionary().len());
-    for word in ext.get_dictionary() {
-        println!("  - {}", word);
+    let dict2 = DictionaryEntry {
+        id: "dict-2".to_string(),
+        term: "Rust".to_string(),
+        definition: "A systems programming language".to_string(),
+        category: Some("Programming".to_string()),
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    };
+
+    ext.add_dictionary_entry(dict1);
+    ext.add_dictionary_entry(dict2);
+
+    println!("Dictionary has {} entries", ext.list_dictionary().len());
+    for entry in ext.list_dictionary() {
+        println!("  - {}: {}", entry.term, entry.definition);
     }
 
     // ============================================================
@@ -144,7 +177,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nRestored extension:");
     println!("  - {} conversations", restored.list_conversations().len());
     println!("  - {} watched folders", restored.get_watched_folders().len());
-    println!("  - {} dictionary words", restored.get_dictionary().len());
+    println!("  - {} dictionary entries", restored.list_dictionary().len());
+    println!("  - {} habits", restored.list_habits().len());
     println!("  - Theme: {}", restored.get_settings().theme);
 
     // ============================================================

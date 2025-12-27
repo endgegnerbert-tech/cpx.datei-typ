@@ -6,7 +6,7 @@
 #![cfg(feature = "contextai")]
 
 use cxp_core::contextai::{
-    ContextAIExtension, Conversation, ChatMessage, UserHabits, AppSettings, WatchedFolder,
+    ContextAIExtension, Conversation, ChatMessage, UserHabit, AppSettings, WatchedFolder, DictionaryEntry,
 };
 
 #[test]
@@ -26,22 +26,27 @@ fn test_contextai_roundtrip_serialization() {
                 role: "user".to_string(),
                 content: "Hello, AI!".to_string(),
                 timestamp: "2025-01-15T10:00:00Z".to_string(),
+                referenced_files: vec![],
             },
             ChatMessage {
                 id: "msg-2".to_string(),
                 role: "assistant".to_string(),
                 content: "Hello! How can I help you?".to_string(),
                 timestamp: "2025-01-15T10:00:30Z".to_string(),
+                referenced_files: vec![],
             },
         ],
     };
     ext.add_conversation(conv);
 
     // Set user habits
-    ext.set_habits(UserHabits {
-        preferred_language: "de".to_string(),
-        coding_style: Some("tabs".to_string()),
-        custom_instructions: vec!["Use TypeScript".to_string(), "Test everything".to_string()],
+    ext.set_habit(UserHabit {
+        id: "habit-1".to_string(),
+        habit_key: "preferred_language".to_string(),
+        habit_value: "de".to_string(),
+        confidence: 1.0,
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+        learned_from_message_id: None,
     });
 
     // Set app settings
@@ -58,9 +63,25 @@ fn test_contextai_roundtrip_serialization() {
         last_scan: Some("2025-01-15T09:00:00Z".to_string()),
     });
 
-    // Add dictionary words
-    ext.add_to_dictionary("Rust".to_string());
-    ext.add_to_dictionary("CXP".to_string());
+    // Add dictionary entries
+    ext.add_dictionary_entry(DictionaryEntry {
+        id: "dict-1".to_string(),
+        term: "Rust".to_string(),
+        definition: "A systems programming language".to_string(),
+        category: None,
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    });
+    ext.add_dictionary_entry(DictionaryEntry {
+        id: "dict-2".to_string(),
+        term: "CXP".to_string(),
+        definition: "Universal AI Context Format".to_string(),
+        category: None,
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    });
 
     // Serialize to extension data
     let extension_data = ext.to_extension_data().expect("Failed to serialize");
@@ -85,10 +106,9 @@ fn test_contextai_roundtrip_serialization() {
     assert_eq!(conv.messages[1].role, "assistant");
 
     // Verify habits
-    let habits = restored.get_habits();
-    assert_eq!(habits.preferred_language, "de");
-    assert_eq!(habits.coding_style, Some("tabs".to_string()));
-    assert_eq!(habits.custom_instructions.len(), 2);
+    assert_eq!(restored.list_habits().len(), 1);
+    let habit = restored.get_habit("preferred_language").expect("Habit not found");
+    assert_eq!(habit.habit_value, "de");
 
     // Verify settings
     let settings = restored.get_settings();
@@ -101,9 +121,9 @@ fn test_contextai_roundtrip_serialization() {
     assert_eq!(restored.get_watched_folders()[0].path, "/home/user/projects");
 
     // Verify dictionary
-    assert_eq!(restored.get_dictionary().len(), 2);
-    assert!(restored.get_dictionary().contains(&"Rust".to_string()));
-    assert!(restored.get_dictionary().contains(&"CXP".to_string()));
+    assert_eq!(restored.list_dictionary().len(), 2);
+    assert!(restored.get_dictionary_entry("Rust").is_some());
+    assert!(restored.get_dictionary_entry("CXP").is_some());
 }
 
 #[test]
@@ -119,7 +139,15 @@ fn test_contextai_json_roundtrip() {
         messages: vec![],
     });
 
-    ext.add_to_dictionary("test".to_string());
+    ext.add_dictionary_entry(DictionaryEntry {
+        id: "dict-test".to_string(),
+        term: "test".to_string(),
+        definition: "A test term".to_string(),
+        category: None,
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    });
 
     // Export to JSON
     let json = ext.to_json().expect("Failed to export to JSON");
@@ -130,7 +158,7 @@ fn test_contextai_json_roundtrip() {
     // Import from JSON
     let restored = ContextAIExtension::from_json(&json).expect("Failed to import from JSON");
     assert_eq!(restored.list_conversations().len(), 1);
-    assert_eq!(restored.get_dictionary().len(), 1);
+    assert_eq!(restored.list_dictionary().len(), 1);
 }
 
 #[test]
@@ -157,10 +185,10 @@ fn test_contextai_partial_data() {
         .expect("Failed to deserialize partial data");
 
     assert_eq!(restored.list_conversations().len(), 1);
-    assert_eq!(restored.get_habits().preferred_language, "en"); // default
+    assert_eq!(restored.list_habits().len(), 0); // default - empty
     assert_eq!(restored.get_settings().theme, "auto"); // default
     assert_eq!(restored.get_watched_folders().len(), 0); // empty
-    assert_eq!(restored.get_dictionary().len(), 0); // empty
+    assert_eq!(restored.list_dictionary().len(), 0); // empty
 }
 
 #[test]
@@ -193,6 +221,7 @@ fn test_contextai_conversation_operations() {
             role: "user".to_string(),
             content: "Test message".to_string(),
             timestamp: "2025-01-15T10:01:00Z".to_string(),
+            referenced_files: vec![],
         },
     )
     .expect("Failed to add message");
@@ -238,24 +267,56 @@ fn test_contextai_watched_folders_operations() {
 fn test_contextai_dictionary_operations() {
     let mut ext = ContextAIExtension::new();
 
-    // Add words
-    ext.add_to_dictionary("Word1".to_string());
-    ext.add_to_dictionary("Word2".to_string());
-    ext.add_to_dictionary("Word3".to_string());
+    // Add entries
+    ext.add_dictionary_entry(DictionaryEntry {
+        id: "dict-1".to_string(),
+        term: "Word1".to_string(),
+        definition: "First word".to_string(),
+        category: None,
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    });
+    ext.add_dictionary_entry(DictionaryEntry {
+        id: "dict-2".to_string(),
+        term: "Word2".to_string(),
+        definition: "Second word".to_string(),
+        category: None,
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    });
+    ext.add_dictionary_entry(DictionaryEntry {
+        id: "dict-3".to_string(),
+        term: "Word3".to_string(),
+        definition: "Third word".to_string(),
+        category: None,
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    });
 
-    assert_eq!(ext.get_dictionary().len(), 3);
+    assert_eq!(ext.list_dictionary().len(), 3);
 
-    // Adding duplicate should not increase count
-    ext.add_to_dictionary("Word1".to_string());
-    assert_eq!(ext.get_dictionary().len(), 3);
+    // Adding duplicate term should update, not increase count
+    ext.add_dictionary_entry(DictionaryEntry {
+        id: "dict-1-updated".to_string(),
+        term: "Word1".to_string(),
+        definition: "Updated first word".to_string(),
+        category: None,
+        learned_from_message_id: None,
+        created_at: "2025-01-15T10:00:00Z".to_string(),
+        updated_at: "2025-01-15T10:00:00Z".to_string(),
+    });
+    assert_eq!(ext.list_dictionary().len(), 3);
 
-    // Remove a word
-    ext.remove_from_dictionary("Word2").expect("Failed to remove word");
-    assert_eq!(ext.get_dictionary().len(), 2);
-    assert!(!ext.get_dictionary().contains(&"Word2".to_string()));
+    // Remove a word by term
+    ext.remove_dictionary_entry_by_term("Word2").expect("Failed to remove word");
+    assert_eq!(ext.list_dictionary().len(), 2);
+    assert!(ext.get_dictionary_entry("Word2").is_none());
 
     // Try to remove non-existent word
-    let result = ext.remove_from_dictionary("NonExistent");
+    let result = ext.remove_dictionary_entry_by_term("NonExistent");
     assert!(result.is_err());
 }
 
@@ -271,10 +332,10 @@ fn test_contextai_empty_extension() {
 
     // Verify defaults
     assert_eq!(restored.list_conversations().len(), 0);
-    assert_eq!(restored.get_habits().preferred_language, "en");
+    assert_eq!(restored.list_habits().len(), 0);
     assert_eq!(restored.get_settings().auto_index, true);
     assert_eq!(restored.get_watched_folders().len(), 0);
-    assert_eq!(restored.get_dictionary().len(), 0);
+    assert_eq!(restored.list_dictionary().len(), 0);
 }
 
 #[test]
@@ -289,6 +350,7 @@ fn test_contextai_large_conversation() {
             role: if i % 2 == 0 { "user" } else { "assistant" }.to_string(),
             content: format!("Message content {}", i),
             timestamp: format!("2025-01-15T10:{:02}:00Z", i),
+            referenced_files: vec![],
         });
     }
 

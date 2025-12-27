@@ -42,13 +42,11 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Verify user habits
-    let habits = contextai.get_habits();
+    let habits = contextai.list_habits();
     println!("\n=== User Habits ===");
-    println!("Preferred Language: {}", habits.preferred_language);
-    println!("Coding Style: {:?}", habits.coding_style);
-    println!("Custom Instructions: {} items", habits.custom_instructions.len());
-    for instruction in &habits.custom_instructions {
-        println!("  - {}", instruction);
+    println!("Total: {}", habits.len());
+    for habit in habits {
+        println!("  {} = {} (confidence: {})", habit.habit_key, habit.habit_value, habit.confidence);
     }
 
     // Verify watched folders
@@ -67,11 +65,11 @@ fn main() -> anyhow::Result<()> {
     println!("Max Context Files: {}", settings.max_context_files);
 
     // Verify dictionary
-    let dictionary = contextai.get_dictionary();
+    let dictionary = contextai.list_dictionary();
     println!("\n=== Custom Dictionary ===");
     println!("Total: {}", dictionary.len());
     for entry in dictionary {
-        println!("  - {}", entry);
+        println!("  - {}: {}", entry.term, entry.definition);
     }
 
     println!("\n✅ Verification completed successfully!");

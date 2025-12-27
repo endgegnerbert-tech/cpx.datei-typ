@@ -7,6 +7,9 @@
 //!   cxp extract <file.cxp> <file-path> [output]
 //!   cxp query <file.cxp> <search-term> [--top-k N]
 //!   cxp search <file.cxp> <query> [--top-k N] --model <path>  (requires embeddings feature)
+//!   cxp migrate <sqlite.db> <output.cxp> [--files <source-dir>]
+
+mod migrate;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -110,6 +113,19 @@ enum Commands {
         #[arg(long)]
         model: Option<PathBuf>,
     },
+
+    /// Migrate a SQLite database to CXP format
+    Migrate {
+        /// SQLite database file to migrate
+        sqlite: PathBuf,
+
+        /// Output CXP file path
+        output: PathBuf,
+
+        /// Optional source files directory to include
+        #[arg(long)]
+        files: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -140,6 +156,9 @@ fn main() -> Result<()> {
         #[cfg(all(feature = "embeddings", feature = "search"))]
         Commands::Search { file, query, top_k, model } => {
             search_semantic(&file, &query, top_k, model.as_deref())
+        }
+        Commands::Migrate { sqlite, output, files } => {
+            migrate::migrate_sqlite_to_cxp(&sqlite, &output, files.as_deref())
         }
     }
 }

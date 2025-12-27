@@ -11,10 +11,11 @@ name = "cxp"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["contextai"]
 embeddings = ["cxp-core/embeddings"]
 search = ["cxp-core/search"]
-full = ["embeddings", "search"]
+contextai = ["cxp-core/contextai"]
+full = ["embeddings", "search", "contextai"]
 
 [dependencies]
 cxp-core = { path = "../cxp-core" }
@@ -34,3 +35,6 @@ tracing-subscriber.workspace = true
 
 # Misc
 chrono.workspace = true
+
+# SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }

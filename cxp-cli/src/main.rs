@@ -9,6 +9,8 @@
 //!   cxp search <file.cxp> [<query> | --image <path>] [--top-k N] [--result-type text|image|all] --model <path>
 //!   cxp embed-image <image-path> --model <path> [--show-dims N]  (requires multimodal feature)
 //!   cxp migrate <sqlite.db> <output.cxp> [--files <source-dir>]
+//!   cxp detect-profile [paths...] (requires scanner feature)
+//!   cxp smart-scan <paths...> [--profile <profile>] (requires scanner feature)
 
 mod migrate;
 
@@ -157,6 +159,28 @@ enum Commands {
         #[arg(long, default_value = "10")]
         show_dims: usize,
     },
+
+    /// Detect user profile based on file types (Developer, Photographer, Designer, etc.)
+    #[cfg(feature = "scanner")]
+    DetectProfile {
+        /// Paths to scan (default: ~/Documents, ~/Desktop, ~/Downloads)
+        paths: Vec<PathBuf>,
+    },
+
+    /// Smart scan directories with profile-based filtering
+    #[cfg(feature = "scanner")]
+    SmartScan {
+        /// Paths to scan
+        paths: Vec<PathBuf>,
+
+        /// User profile to use (developer, photographer, designer, writer, student, business)
+        #[arg(long, short)]
+        profile: Option<String>,
+
+        /// Output detailed information
+        #[arg(long)]
+        detailed: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -194,6 +218,14 @@ fn main() -> Result<()> {
         #[cfg(all(feature = "multimodal", feature = "search"))]
         Commands::EmbedImage { image, model, show_dims } => {
             embed_image_command(&image, &model, show_dims)
+        }
+        #[cfg(feature = "scanner")]
+        Commands::DetectProfile { paths } => {
+            detect_profile_command(paths)
+        }
+        #[cfg(feature = "scanner")]
+        Commands::SmartScan { paths, profile, detailed } => {
+            smart_scan_command(paths, profile, detailed)
         }
     }
 }
@@ -727,6 +759,341 @@ fn embed_image_command(
     }
 
     println!();
+
+    Ok(())
+}
+
+/// Detect user profile based on file types
+#[cfg(feature = "scanner")]
+fn detect_profile_command(paths: Vec<PathBuf>) -> Result<()> {
+    use cxp_core::scanner::{ProfileDetector, QuickScanner, UserProfile};
+
+    println!("Detecting user profile...");
+    println!();
+
+    // Use default paths if none provided
+    let scan_paths = if paths.is_empty() {
+        let mut default_paths = Vec::new();
+        if let Some(docs) = dirs::document_dir() {
+            default_paths.push(docs);
+        }
+        if let Some(desktop) = dirs::desktop_dir() {
+            default_paths.push(desktop);
+        }
+        if let Some(downloads) = dirs::download_dir() {
+            default_paths.push(downloads);
+        }
+        if default_paths.is_empty() {
+            return Err(anyhow::anyhow!("No paths to scan. Please provide paths or ensure standard directories exist."));
+        }
+        default_paths
+    } else {
+        paths
+    };
+
+    println!("Scanning paths:");
+    for path in &scan_paths {
+        println!("  - {}", path.display());
+    }
+    println!();
+
+    // Run quick scan
+    let start = Instant::now();
+    let scanner = QuickScanner::new().with_paths(&scan_paths);
+    let scan_result = scanner.scan().context("Failed to scan directories")?;
+    let scan_duration = start.elapsed();
+
+    println!("Scan completed in {:.2}s", scan_duration.as_secs_f64());
+    println!("  Files scanned: {}", scan_result.total_files);
+    println!("  File types:    {}", scan_result.extension_counts.len());
+    println!("  Apps detected: {}", scan_result.detected_apps.len());
+    println!();
+
+    // Detect profile
+    let suggestion = ProfileDetector::detect_profile(&scan_result);
+
+    // Display results
+    println!("Profile Detection Results");
+    println!("=========================");
+    println!();
+
+    let profile_icon = match suggestion.primary {
+        UserProfile::Developer => "💻",
+        UserProfile::Photographer => "📷",
+        UserProfile::Designer => "🎨",
+        UserProfile::Writer => "✍️",
+        UserProfile::Student => "🎓",
+        UserProfile::Business => "💼",
+        UserProfile::Custom => "⚙️",
+    };
+
+    println!("Primary Profile:  {} {:?}", profile_icon, suggestion.primary);
+    println!("Confidence:       {:.0}%", suggestion.confidence * 100.0);
+
+    if let Some(ref secondary) = suggestion.secondary {
+        let secondary_icon = match secondary {
+            UserProfile::Developer => "💻",
+            UserProfile::Photographer => "📷",
+            UserProfile::Designer => "🎨",
+            UserProfile::Writer => "✍️",
+            UserProfile::Student => "🎓",
+            UserProfile::Business => "💼",
+            UserProfile::Custom => "⚙️",
+        };
+        println!("Secondary:        {} {:?}", secondary_icon, secondary);
+    }
+
+    println!();
+
+    // Show detected apps
+    if !scan_result.detected_apps.is_empty() {
+        println!("Detected Applications:");
+        for app in &scan_result.detected_apps {
+            println!("  - {} ({})", app.name, app.app_type);
+        }
+        println!();
+    }
+
+    // Show top file types
+    let mut ext_counts: Vec<_> = scan_result.extension_counts.iter().collect();
+    ext_counts.sort_by(|a, b| b.1.cmp(a.1));
+
+    println!("Top File Types:");
+    for (ext, count) in ext_counts.iter().take(10) {
+        println!("  .{:<10} {:>6} files", ext, count);
+    }
+
+    println!();
+
+    // Show profile scores for debugging
+    println!("Profile Scores:");
+    for (profile, score) in &suggestion.scores {
+        let icon = match profile {
+            UserProfile::Developer => "💻",
+            UserProfile::Photographer => "📷",
+            UserProfile::Designer => "🎨",
+            UserProfile::Writer => "✍️",
+            UserProfile::Student => "🎓",
+            UserProfile::Business => "💼",
+            UserProfile::Custom => "⚙️",
+        };
+        println!("  {} {:?}: {}", icon, profile, score);
+    }
+
+    Ok(())
+}
+
+/// Smart scan directories with profile-based filtering
+#[cfg(feature = "scanner")]
+fn smart_scan_command(paths: Vec<PathBuf>, profile_str: Option<String>, detailed: bool) -> Result<()> {
+    use cxp_core::scanner::{
+        ProfileDetector, QuickScanner, UserProfile, RelevanceScorer, Tier, TierManager,
+        IgnoreConfig, FileMetadata,
+    };
+
+    println!("Smart Scan");
+    println!("==========");
+    println!();
+
+    // Validate paths
+    if paths.is_empty() {
+        return Err(anyhow::anyhow!("No paths provided. Usage: cxp smart-scan <paths...>"));
+    }
+
+    for path in &paths {
+        if !path.exists() {
+            return Err(anyhow::anyhow!("Path does not exist: {}", path.display()));
+        }
+    }
+
+    println!("Scanning paths:");
+    for path in &paths {
+        println!("  - {}", path.display());
+    }
+    println!();
+
+    // Determine profile
+    let profile = if let Some(profile_name) = profile_str {
+        match profile_name.to_lowercase().as_str() {
+            "developer" | "dev" => UserProfile::Developer,
+            "photographer" | "photo" => UserProfile::Photographer,
+            "designer" | "design" => UserProfile::Designer,
+            "writer" | "write" => UserProfile::Writer,
+            "student" => UserProfile::Student,
+            "business" | "biz" => UserProfile::Business,
+            "custom" => UserProfile::Custom,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown profile: {}. Valid options: developer, photographer, designer, writer, student, business, custom",
+                    profile_name
+                ));
+            }
+        }
+    } else {
+        // Auto-detect profile
+        println!("Auto-detecting profile...");
+        let scanner = QuickScanner::new().with_paths(&paths);
+        let scan_result = scanner.scan().context("Failed to quick scan")?;
+        let suggestion = ProfileDetector::detect_profile(&scan_result);
+        println!("  Detected: {:?} ({:.0}% confidence)", suggestion.primary, suggestion.confidence * 100.0);
+        println!();
+        suggestion.primary
+    };
+
+    let profile_icon = match profile {
+        UserProfile::Developer => "💻",
+        UserProfile::Photographer => "📷",
+        UserProfile::Designer => "🎨",
+        UserProfile::Writer => "✍️",
+        UserProfile::Student => "🎓",
+        UserProfile::Business => "💼",
+        UserProfile::Custom => "⚙️",
+    };
+
+    println!("Using Profile: {} {:?}", profile_icon, profile);
+    println!();
+
+    // Get profile-specific config
+    let scan_config = profile.default_config();
+    let ignore_config = IgnoreConfig::default();
+
+    println!("Profile Settings:");
+    println!("  Max file size:  {} MB", scan_config.max_file_size / 1024 / 1024);
+    println!("  Include images: {}", scan_config.include_images);
+    println!("  Extensions:     {} types", scan_config.file_extensions.len());
+    println!();
+
+    // Full scan with profile filtering
+    println!("Scanning files...");
+    let start = Instant::now();
+
+    use walkdir::WalkDir;
+    let mut files_by_tier: Vec<(PathBuf, f64, Tier)> = Vec::new();
+    let mut total_scanned = 0;
+    let mut total_ignored = 0;
+
+    let scorer = RelevanceScorer::new(profile.clone());
+
+    for base_path in &paths {
+        for entry in WalkDir::new(base_path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+
+            // Skip directories
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            total_scanned += 1;
+
+            // Check ignore patterns (use path string)
+            let path_str = path.to_string_lossy();
+            if ignore_config.should_ignore(&path_str).unwrap_or(false) {
+                total_ignored += 1;
+                continue;
+            }
+
+            // Check extension
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if !scan_config.file_extensions.is_empty()
+                    && !scan_config.file_extensions.iter().any(|e| e.to_lowercase() == ext_str)
+                {
+                    total_ignored += 1;
+                    continue;
+                }
+            } else {
+                total_ignored += 1;
+                continue;
+            }
+
+            // Check file size
+            if let Ok(metadata) = path.metadata() {
+                if metadata.len() > scan_config.max_file_size {
+                    total_ignored += 1;
+                    continue;
+                }
+            }
+
+            // Calculate relevance score
+            let score = if let Ok(file_meta) = FileMetadata::from_path(path) {
+                scorer.score_file(&file_meta)
+            } else {
+                0.5
+            };
+
+            let tier = Tier::from_score(score);
+            files_by_tier.push((path.to_path_buf(), score, tier));
+        }
+    }
+
+    let scan_duration = start.elapsed();
+
+    // Categorize by tier
+    let mut tier_manager = TierManager::new();
+    for (path, score, _) in &files_by_tier {
+        tier_manager.add_file_with_score(path.to_string_lossy().to_string(), *score);
+    }
+
+    let stats = tier_manager.stats();
+
+    println!();
+    println!("Scan Results");
+    println!("============");
+    println!("  Duration:      {:.2}s", scan_duration.as_secs_f64());
+    println!("  Total scanned: {}", total_scanned);
+    println!("  Total ignored: {}", total_ignored);
+    println!("  Included:      {}", files_by_tier.len());
+    println!();
+
+    println!("Tier Distribution:");
+    println!("  🔥 HOT:   {:>6} files", stats.hot_count);
+    println!("  🟡 WARM:  {:>6} files", stats.warm_count);
+    println!("  🧊 COLD:  {:>6} files", stats.cold_count);
+    println!();
+
+    // Calculate estimated sizes
+    let mut hot_size: u64 = 0;
+    let mut warm_size: u64 = 0;
+    let mut cold_size: u64 = 0;
+
+    for (path, _, tier) in &files_by_tier {
+        if let Ok(metadata) = path.metadata() {
+            match tier {
+                Tier::Hot => hot_size += metadata.len(),
+                Tier::Warm => warm_size += metadata.len(),
+                Tier::Cold => cold_size += metadata.len(),
+            }
+        }
+    }
+
+    println!("Estimated Sizes:");
+    println!("  🔥 HOT:   {}", format_size(hot_size));
+    println!("  🟡 WARM:  {}", format_size(warm_size));
+    println!("  🧊 COLD:  {}", format_size(cold_size));
+    println!("  Total:   {}", format_size(hot_size + warm_size + cold_size));
+    println!();
+
+    // Show detailed file list if requested
+    if detailed {
+        println!("HOT Files (top 20):");
+        println!("-------------------");
+        let hot_files = tier_manager.get_files(Tier::Hot);
+        for (i, path) in hot_files.iter().take(20).enumerate() {
+            println!("  {}. {}", i + 1, path);
+        }
+        if hot_files.len() > 20 {
+            println!("  ... and {} more", hot_files.len() - 20);
+        }
+        println!();
+    }
+
+    println!("Next steps:");
+    println!("  cxp build <path> output.cxp --embeddings --model <model-path>");
+    println!("  (Use HOT files for active context, WARM for on-demand loading)");
 
     Ok(())
 }

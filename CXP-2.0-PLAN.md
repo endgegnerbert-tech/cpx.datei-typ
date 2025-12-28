@@ -2,38 +2,55 @@
 
 ---
 
-## 📊 AKTUELLER FORTSCHRITT (Stand: 27. Dezember 2025)
+## 📊 AKTUELLER FORTSCHRITT (Stand: 28. Dezember 2025)
 
 ```
 Phase 1: Core Library      ████████████████████ 100% ✅
 Phase 2: Embeddings/Search ████████████████████ 100% ✅
 Phase 3: Extension System  ████████████████████ 100% ✅
-Phase 4: ContextAI         ████████████████████ 100% ✅ (CXP-Seite fertig!)
-Phase 5: Multi-Platform    🔮 ZUKUNFT (Optional)
+Phase 4: ContextAI         ████████████████████ 100% ✅
+Phase 5: Multimodal        ████████████████████ 100% ✅ ← NEU!
+Phase 6: Multi-Platform    🔮 ZUKUNFT (Optional)
 
 Gesamt:                    ████████████████████ 100% (CXP Library komplett!)
 ```
 
 ### ✅ Was funktioniert JETZT:
+
+**Text-Features:**
 - `cxp build /path output.cxp` - CXP-Dateien erstellen
 - `cxp build --embeddings --model <path>` - Mit Embeddings
 - `cxp info file.cxp` - Statistiken anzeigen
 - `cxp list file.cxp` - Dateien auflisten
 - `cxp extract file.cxp` - Dateien extrahieren
 - `cxp query file.cxp "term"` - Keyword-Suche
-- `cxp search file.cxp "query"` - Semantische Suche (mit Embeddings)
+- `cxp search file.cxp "query"` - Semantische Suche
 - FastCDC Chunking mit Deduplication
 - Zstandard Kompression (85% kleiner als JSON!)
 - Binary Embeddings (32x kleiner als float32)
 - Int8 Embeddings für Rescoring
 - HNSW Index mit Hamming Distance
-- **Extension System für ContextAI**
-- **15/15 Integration Tests bestanden**
 
-### ⏳ Was fehlt noch:
+**Multimodal-Features (NEU!):**
+- `cxp build --images` - Bilder mit embedden
+- `cxp search --result-type <text|image|all>` - Type-Filtering
+- `cxp search --image query.jpg` - Suche mit Bild
+- SigLIP 2 ONNX Integration (512-dim Vektoren)
+- Cross-Modal Search (Text ↔ Bild)
+- Unified HNSW Index für Text + Bilder
+- Automatische Bild-Erkennung (png, jpg, jpeg, gif, webp)
+
+**ContextAI-Features:**
+- Extension System für App-Daten
+- SQLite → CXP Migration Tool
+- Alle SQLite-Tabellen als Rust Structs
+- CRUD Methoden für alle Entitäten
+- 15/15 Integration Tests bestanden
+
+### ⏳ Nächste Schritte (ContextAI App):
+- Tauri Backend umbauen (CxpState)
 - Frontend Integration (React Components)
-- SQLite Code entfernen (nach vollständiger Migration)
-- Testing & Bug Fixes
+- SQLite Code entfernen
 
 ### 📁 Implementierte Module (cxp-core/src/):
 ```
@@ -43,13 +60,15 @@ chunker.rs          ✅ FastCDC Content-Defined Chunking
 dedup.rs            ✅ SHA256 Deduplication
 compress.rs         ✅ Zstandard Compression
 manifest.rs         ✅ Manifest mit Stats & FileTypes
-error.rs            ✅ CxpError Enum (12 Varianten)
+error.rs            ✅ CxpError Enum
 embeddings.rs       ✅ ONNX Runtime Engine (ort 2.0.0-rc.10)
 embeddings_tract.rs ✅ Tract Engine für WASM (tract-onnx 0.22)
-index.rs            ✅ HNSW Index (usearch 2.15)
-semantic.rs         ✅ NEU: Embeddings Storage & Serialization
-extensions.rs       ✅ NEU: Extension System
-contextai.rs        ✅ NEU: ContextAI Extension (Conversations, Habits, Settings)
+index.rs            ✅ HNSW Index (usearch 2.15+)
+semantic.rs         ✅ Embeddings Storage & Serialization
+extensions.rs       ✅ Extension System
+contextai.rs        ✅ ContextAI Extension
+multimodal.rs       ✅ NEU: SigLIP 2 Multimodal Engine
+unified_index.rs    ✅ NEU: Cross-Modal HNSW Index
 ```
 
 ---

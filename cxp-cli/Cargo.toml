@@ -11,12 +11,13 @@ name = "cxp"
 path = "src/main.rs"
 
 [features]
-default = ["contextai"]
+default = ["contextai", "scanner"]
 embeddings = ["cxp-core/embeddings"]
 search = ["cxp-core/search"]
 multimodal = ["cxp-core/multimodal"]
 contextai = ["cxp-core/contextai"]
-full = ["embeddings", "search", "multimodal", "contextai"]
+scanner = ["cxp-core/scanner", "dirs", "walkdir"]
+full = ["embeddings", "search", "multimodal", "contextai", "scanner"]
 
 [dependencies]
 cxp-core = { path = "../cxp-core" }
@@ -42,6 +43,10 @@ serde_json.workspace = true
 
 # SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Scanner
+dirs = { version = "5.0", optional = true }
+walkdir = { version = "2.5", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

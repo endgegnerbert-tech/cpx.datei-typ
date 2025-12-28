@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["AVG_CHUNK_SIZE","IMAGE_EXTENSIONS","MAX_CHUNK_SIZE","MIN_CHUNK_SIZE","TEXT_EXTENSIONS","VERSION"],"fn":["is_image_file","is_text_file"],"mod":["chunker","compress","dedup","error","extensions","format","index","manifest"]};
+window.SIDEBAR_ITEMS = {"constant":["AVG_CHUNK_SIZE","IMAGE_EXTENSIONS","MAX_CHUNK_SIZE","MIN_CHUNK_SIZE","TEXT_EXTENSIONS","VERSION"],"fn":["is_image_file","is_text_file"],"mod":["chunker","compress","dedup","error","extensions","format","manifest","scanner"]};

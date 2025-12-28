@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["DistanceMetric"],"struct":["HnswConfig","HnswIndex","SearchResult"]};

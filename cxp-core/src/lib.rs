@@ -32,6 +32,9 @@ pub mod unified_index;
 #[cfg(any(feature = "embeddings", feature = "embeddings-wasm", feature = "multimodal"))]
 pub mod semantic;
 
+#[cfg(feature = "scanner")]
+pub mod scanner;
+
 pub use error::{CxpError, Result};
 pub use manifest::Manifest;
 pub use format::{CxpFile, CxpBuilder, CxpReader};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ALWAYS_IGNORE","DEFAULT_IGNORE"],"enum":["SpecialDetector","Tier","UserProfile"],"struct":["ContentTypes","CustomConfig","DetectedApp","IgnoreConfig","ProfileDetector","ProfileSuggestion","QuickScanResult","QuickScanner","RelevanceScorer","ScanConfig","TierManager"]};

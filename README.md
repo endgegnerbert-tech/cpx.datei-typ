@@ -17,6 +17,7 @@ Traditional formats like JSON or XML are inefficient for AI context:
 
 **CXP reduces token usage by 40-70%** compared to raw text, saving costs and improving AI response quality.
 
+
 ## Features
 
 - **Smart Compression**: Zstd compression with content-aware chunking
@@ -155,12 +156,17 @@ Powered by CXP Core - https://github.com/endgegnerbert-tech/cxp-core
 ## Contributing
 
 Contributions are welcome! Please read our contributing guidelines before submitting PRs.
+##Ps
+Some Words from my Side i have in Mind to make it usable for every documetn type and make more out of it because there is a big problem in Ai because i isnt inteligent in it self ,everyone knows it but we could change it if we give the ai files maby files with human connection in it .Just for now this is what i am working on with Ai because i dont know what i am doing this is new but i have so many Ideas 
+Thanks for reading my cxp and By
+
 
 ## Links
 
 - [ContextAI](https://github.com/endgegnerbert-tech/context-Ai-App) - AI assistant powered by CXP
 - [Documentation](https://cxp-core.dev/docs) (coming soon)
 - [Discord Community](https://discord.gg/contextai) (coming soon)
+  
 
 ---
 

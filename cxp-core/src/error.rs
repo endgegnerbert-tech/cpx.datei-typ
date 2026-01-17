@@ -6,7 +6,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum CxpError {
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
 
     #[error("ZIP error: {0}")]
     Zip(#[from] zip::result::ZipError),
@@ -60,6 +60,12 @@ impl From<rmp_serde::decode::Error> for CxpError {
 impl From<serde_json::Error> for CxpError {
     fn from(e: serde_json::Error) -> Self {
         CxpError::Serialization(e.to_string())
+    }
+}
+
+impl From<std::io::Error> for CxpError {
+    fn from(e: std::io::Error) -> Self {
+        CxpError::Io(e.to_string())
     }
 }
 

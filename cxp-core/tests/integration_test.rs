@@ -10,7 +10,7 @@ use tempfile::TempDir;
 
 /// Helper to create a test directory with sample files
 fn create_test_directory() -> Result<TempDir> {
-    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
 
     // Create some test files
     let files = vec![
@@ -64,7 +64,7 @@ fn test_cxp_builder_process() -> Result<()> {
 #[test]
 fn test_cxp_builder_build() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -81,7 +81,7 @@ fn test_cxp_builder_build() -> Result<()> {
 fn test_cxp_reader_open() -> Result<()> {
     // Build a CXP file first
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -100,7 +100,7 @@ fn test_cxp_reader_open() -> Result<()> {
 #[test]
 fn test_cxp_reader_list_files() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -122,7 +122,7 @@ fn test_cxp_reader_list_files() -> Result<()> {
 #[test]
 fn test_cxp_reader_read_file() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -143,7 +143,7 @@ fn test_cxp_reader_read_file() -> Result<()> {
 #[test]
 fn test_cxp_reader_extract_and_verify() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     // Create original content map
@@ -183,7 +183,7 @@ fn test_cxp_reader_extract_and_verify() -> Result<()> {
 #[test]
 fn test_chunking_consistency() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -199,7 +199,7 @@ fn test_chunking_consistency() -> Result<()> {
 #[test]
 fn test_deduplication() -> Result<()> {
     // Create a directory with duplicate content
-    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
 
     // Create multiple files with the same content
     let duplicate_content = "This is repeated content that should be deduplicated.\n".repeat(10);
@@ -210,7 +210,7 @@ fn test_deduplication() -> Result<()> {
         file.write_all(duplicate_content.as_bytes())?;
     }
 
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("dedup_test.cxp");
 
     let mut builder = CxpBuilder::new(temp_dir.path());
@@ -229,7 +229,7 @@ fn test_deduplication() -> Result<()> {
 #[test]
 fn test_compression_effectiveness() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -252,7 +252,7 @@ fn test_compression_effectiveness() -> Result<()> {
 #[test]
 fn test_file_not_found_error() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -276,8 +276,8 @@ fn test_file_not_found_error() -> Result<()> {
 
 #[test]
 fn test_empty_directory() -> Result<()> {
-    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("empty.cxp");
 
     let mut builder = CxpBuilder::new(temp_dir.path());
@@ -292,7 +292,7 @@ fn test_empty_directory() -> Result<()> {
 
 #[test]
 fn test_large_file_chunking() -> Result<()> {
-    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let temp_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
 
     // Create a large file (>100KB)
     let large_content = "A".repeat(100_000);
@@ -300,7 +300,7 @@ fn test_large_file_chunking() -> Result<()> {
     let mut file = File::create(&file_path)?;
     file.write_all(large_content.as_bytes())?;
 
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("large_test.cxp");
 
     let mut builder = CxpBuilder::new(temp_dir.path());
@@ -326,7 +326,7 @@ fn test_large_file_chunking() -> Result<()> {
 #[test]
 fn test_manifest_file_types() -> Result<()> {
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("test.cxp");
 
     let mut builder = CxpBuilder::new(test_dir.path());
@@ -357,7 +357,7 @@ fn test_manifest_file_types() -> Result<()> {
 fn test_complete_workflow() -> Result<()> {
     // This test verifies the complete workflow from start to finish
     let test_dir = create_test_directory()?;
-    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e))?;
+    let output_dir = TempDir::new().map_err(|e| CxpError::Io(e.to_string()))?;
     let output_path = output_dir.path().join("complete_workflow.cxp");
 
     // Step 1: Create CXP file

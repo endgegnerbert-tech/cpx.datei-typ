@@ -15,7 +15,7 @@ description = "CXP - Universal AI Context Format"
 fastcdc = "3.1"
 zstd = "0.13"
 sha2 = "0.10"
-zip = "2.2"
+zip = { version = "2.2", features = ["zstd"] }
 rayon = "1.10"
 
 # Serialization

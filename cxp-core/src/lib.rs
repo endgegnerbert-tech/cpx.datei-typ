@@ -2,6 +2,10 @@
 //!
 //! A KI-optimized data format that is 85% smaller than JSON,
 //! with built-in semantic search and multi-platform support.
+//!
+//! # Recursive CXP Support
+//! CXP files can contain references to other CXP files, creating
+//! a hierarchical tree structure for organizing entire computers.
 
 pub mod chunker;
 pub mod dedup;
@@ -10,6 +14,13 @@ pub mod format;
 pub mod manifest;
 pub mod error;
 pub mod extensions;
+pub mod token;
+
+// Recursive CXP support (always available)
+pub mod recursive;
+pub mod global_index;
+pub mod manager;
+pub mod recursive_builder;
 
 #[cfg(feature = "contextai")]
 pub mod contextai;
@@ -39,6 +50,13 @@ pub use error::{CxpError, Result};
 pub use manifest::Manifest;
 pub use format::{CxpFile, CxpBuilder, CxpReader};
 pub use extensions::{Extension, ExtensionManager, ExtensionManifest};
+pub use token::{estimate_tokens, calculate_savings, TokenSavings, CostSavings, format_bytes, format_tokens};
+
+// Recursive CXP exports
+pub use recursive::{CxpRef, CxpStorage, CxpRefMeta, FileTier, ChildrenMap};
+pub use global_index::{GlobalIndex, GlobalIndexEntry, GlobalIndexStats};
+pub use manager::{CxpManager, CxpManagerConfig, SearchHit, MemoryStats};
+pub use recursive_builder::{RecursiveBuilder, RecursiveBuildConfig, ProposedStructure, DirStats, ProjectPattern};
 
 #[cfg(feature = "contextai")]
 pub use contextai::ContextAIExtension;
@@ -88,17 +106,30 @@ pub const MAX_CHUNK_SIZE: u32 = 8 * 1024;      // 8 KB
 /// Supported file extensions for text content
 pub const TEXT_EXTENSIONS: &[&str] = &[
     // Code
-    "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h", "hpp",
-    "cs", "rb", "php", "swift", "kt", "scala", "r", "sql", "sh", "bash", "zsh",
-    "ps1", "bat", "cmd",
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts",
+    "py", "pyw", "pyi", "go", "java", "c", "cpp", "h", "hpp", "cc", "hh",
+    "cs", "rb", "php", "swift", "kt", "kts", "scala", "r", "sql",
+    "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+    "lua", "pl", "pm", "tcl", "awk", "sed",
+    "dart", "ex", "exs", "erl", "hrl", "clj", "cljs", "elm", "hs", "fs", "fsx",
+    "ml", "mli", "nim", "v", "zig", "d", "ada", "adb", "ads",
     // Config
-    "json", "yaml", "yml", "toml", "xml", "ini", "env", "conf", "config",
+    "json", "jsonc", "json5", "yaml", "yml", "toml", "xml", "ini", "env",
+    "conf", "config", "cfg", "properties", "plist", "editorconfig",
+    "gitignore", "gitattributes", "dockerignore", "npmrc", "nvmrc",
     // Docs
-    "md", "mdx", "txt", "rst", "adoc", "tex",
+    "md", "mdx", "markdown", "txt", "text", "rst", "adoc", "asciidoc",
+    "tex", "latex", "org", "rtf", "log",
     // Web
-    "html", "htm", "css", "scss", "sass", "less", "vue", "svelte",
+    "html", "htm", "xhtml", "css", "scss", "sass", "less", "styl",
+    "vue", "svelte", "astro", "hbs", "handlebars", "ejs", "pug", "jade",
     // Data
-    "csv", "tsv",
+    "csv", "tsv", "graphql", "gql", "prisma",
+    // Build/Package
+    "makefile", "cmake", "gradle", "sbt", "gemfile", "podfile",
+    "dockerfile", "vagrantfile", "jenkinsfile",
+    // Lock files (for context)
+    "lock",
 ];
 
 /// Supported image extensions for multimodal processing

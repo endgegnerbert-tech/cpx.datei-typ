@@ -73,6 +73,7 @@ pub struct FileEntry {
 }
 
 /// A CXP file handle
+#[derive(Debug, Clone)]
 pub struct CxpFile {
     /// The manifest
     pub manifest: Manifest,
@@ -80,6 +81,96 @@ pub struct CxpFile {
     pub file_map: FileMap,
     /// Chunk store
     pub chunk_store: ChunkStore,
+}
+
+impl CxpFile {
+    /// Open a CXP file from disk
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let file = File::open(path)
+            .map_err(|e| CxpError::InvalidFormat(format!("Failed to open CXP file: {}", e)))?;
+
+        let mut archive = ZipArchive::new(file)
+            .map_err(|e| CxpError::InvalidFormat(format!("Failed to read CXP archive: {}", e)))?;
+
+        // Read manifest
+        let manifest = {
+            let mut entry = archive.by_name("manifest.msgpack")
+                .map_err(|e| CxpError::InvalidFormat(format!("No manifest found: {}", e)))?;
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data)
+                .map_err(|e| CxpError::InvalidFormat(format!("Failed to read manifest: {}", e)))?;
+            Manifest::from_msgpack(&data)?
+        };
+
+        // Read file map
+        let file_map = {
+            let mut entry = archive.by_name("file_map.msgpack")
+                .map_err(|e| CxpError::InvalidFormat(format!("No file_map found: {}", e)))?;
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data)
+                .map_err(|e| CxpError::InvalidFormat(format!("Failed to read file_map: {}", e)))?;
+            rmp_serde::from_slice(&data)
+                .map_err(|e| CxpError::Serialization(format!("Failed to parse file_map: {}", e)))?
+        };
+
+        // Create chunk store (chunks loaded on demand)
+        let chunk_store = ChunkStore::new();
+
+        Ok(Self {
+            manifest,
+            file_map,
+            chunk_store,
+        })
+    }
+
+    /// Estimate memory size of this CXP when fully loaded
+    pub fn estimate_memory_size(&self) -> usize {
+        // Manifest size estimate
+        let manifest_size = std::mem::size_of::<Manifest>()
+            + self.manifest.topics.len() * 32  // Average topic string
+            + self.manifest.file_types.len() * 128  // Average file type entry
+            + self.manifest.extensions.len() * 32;
+
+        // File map size estimate
+        let file_map_size = self.file_map.files.len() * (
+            std::mem::size_of::<FileEntry>()
+            + 100  // Average path string
+        );
+
+        // Chunk store - assume compressed chunks are 4KB average
+        let chunk_size = self.manifest.stats.unique_chunks * 4096;
+
+        manifest_size + file_map_size + chunk_size
+    }
+
+    /// Get a file's content from the CXP
+    pub fn get_file_content(&self, file_path: &str) -> Result<Option<String>> {
+        let entry = match self.file_map.files.get(file_path) {
+            Some(e) => e,
+            None => return Ok(None),
+        };
+
+        // Collect all chunks for this file
+        let mut content = String::new();
+        for chunk_ref in &entry.chunks {
+            if let Some(chunk) = self.chunk_store.get(&chunk_ref.hash) {
+                content.push_str(&String::from_utf8_lossy(&chunk.data));
+            }
+        }
+
+        Ok(Some(content))
+    }
+
+    /// List all files in the CXP
+    pub fn list_files(&self) -> Vec<&str> {
+        self.file_map.files.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get file count
+    pub fn file_count(&self) -> usize {
+        self.file_map.files.len()
+    }
 }
 
 /// Builder for creating CXP files

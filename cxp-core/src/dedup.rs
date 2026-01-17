@@ -6,7 +6,7 @@ use crate::chunker::{Chunk, ChunkRef};
 use std::collections::HashMap;
 
 /// Chunk store with deduplication
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ChunkStore {
     /// Chunks indexed by their hash
     chunks: HashMap<String, Chunk>,
@@ -87,6 +87,11 @@ impl ChunkStore {
     /// Get all chunks
     pub fn chunks(&self) -> impl Iterator<Item = &Chunk> {
         self.chunks.values()
+    }
+
+    /// Iterate over all chunks with their hashes
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Chunk)> {
+        self.chunks.iter()
     }
 
     /// Get the number of unique chunks

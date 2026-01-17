@@ -6,6 +6,8 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
+use crate::recursive::{ChildrenMap, FileTier};
+
 /// CXP Manifest - stored as manifest.msgpack in the CXP file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -28,9 +30,11 @@ pub struct Manifest {
     pub topics: Vec<String>,
 
     /// Embedding model used (if embeddings are present)
+    #[serde(default)]
     pub embedding_model: Option<String>,
 
     /// Embedding dimension
+    #[serde(default)]
     pub embedding_dim: Option<usize>,
 
     /// Extensions present in this CXP file
@@ -38,6 +42,32 @@ pub struct Manifest {
 
     /// Custom metadata
     pub metadata: HashMap<String, String>,
+
+    // === Recursive CXP Support ===
+
+    /// Child CXP references (for hierarchical structures)
+    #[serde(default)]
+    pub children: ChildrenMap,
+
+    /// Parent CXP path (if this is a child CXP)
+    #[serde(default)]
+    pub parent_path: Option<Vec<String>>,
+
+    /// Tier of this CXP (Hot/Warm/Cold)
+    #[serde(default)]
+    pub tier: FileTier,
+
+    /// Categories for this CXP
+    #[serde(default)]
+    pub categories: Vec<String>,
+
+    /// Keywords extracted from content (for global search)
+    #[serde(default)]
+    pub keywords: Vec<String>,
+
+    /// Last access time (for tier calculation)
+    #[serde(default)]
+    pub last_accessed: Option<DateTime<Utc>>,
 }
 
 /// Statistics about the CXP contents
@@ -93,7 +123,63 @@ impl Manifest {
             embedding_dim: None,
             extensions: Vec::new(),
             metadata: HashMap::new(),
+            // Recursive CXP defaults
+            children: ChildrenMap::new(),
+            parent_path: None,
+            tier: FileTier::Warm,
+            categories: Vec::new(),
+            keywords: Vec::new(),
+            last_accessed: None,
         }
+    }
+
+    /// Check if this CXP has children
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
+    }
+
+    /// Get child count
+    pub fn child_count(&self) -> usize {
+        self.children.len()
+    }
+
+    /// Add a child reference
+    pub fn add_child(&mut self, child: crate::recursive::CxpRef) {
+        self.children.add(child);
+    }
+
+    /// Get children by tier
+    pub fn hot_children(&self) -> Vec<&crate::recursive::CxpRef> {
+        self.children.hot()
+    }
+
+    /// Calculate the current tier based on access patterns
+    pub fn calculate_tier(&self) -> FileTier {
+        let now = Utc::now();
+        let days_since_modified = (now - self.updated_at).num_days();
+        let days_since_accessed = self.last_accessed
+            .map(|t| (now - t).num_days())
+            .unwrap_or(365);
+
+        // Weighted score: modification is more important than access
+        let score = (days_since_modified as f64 * 0.7) + (days_since_accessed as f64 * 0.3);
+
+        match score as i64 {
+            0..=7 => FileTier::Hot,
+            8..=30 => FileTier::Warm,
+            _ => FileTier::Cold,
+        }
+    }
+
+    /// Update tier based on current access patterns
+    pub fn recalculate_tier(&mut self) {
+        self.tier = self.calculate_tier();
+    }
+
+    /// Mark as accessed
+    pub fn touch_access(&mut self) {
+        self.last_accessed = Some(Utc::now());
+        self.recalculate_tier();
     }
 
     /// Update the timestamp

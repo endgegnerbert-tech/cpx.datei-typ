@@ -1,0 +1,11 @@
+/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/deps/bzip2-5dc5dbb7500e6603.d: /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/lib.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/mem.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/bufread.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/read.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/write.rs
+
+/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/deps/libbzip2-5dc5dbb7500e6603.rlib: /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/lib.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/mem.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/bufread.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/read.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/write.rs
+
+/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/deps/libbzip2-5dc5dbb7500e6603.rmeta: /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/lib.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/mem.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/bufread.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/read.rs /Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/write.rs
+
+/Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/lib.rs:
+/Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/mem.rs:
+/Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/bufread.rs:
+/Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/read.rs:
+/Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bzip2-0.5.2/src/write.rs:

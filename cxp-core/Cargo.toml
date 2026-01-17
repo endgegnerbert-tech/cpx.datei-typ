@@ -28,6 +28,7 @@ flatbuffers.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_repr = "0.1"
 
 # Error Handling
 thiserror.workspace = true

@@ -180,6 +180,9 @@ pub struct ContextAIExtension {
     pub dictionary: Vec<DictionaryEntry>,
     /// App settings
     pub settings: AppSettings,
+    /// Last full CXP update timestamp (RFC3339 format)
+    #[serde(default)]
+    pub last_full_update: Option<String>,
 }
 
 #[cfg(feature = "contextai")]
@@ -199,6 +202,7 @@ impl ContextAIExtension {
                 auto_index: true,
                 max_context_files: 50,
             },
+            last_full_update: None,
         }
     }
 
@@ -580,6 +584,11 @@ impl ContextAIExtension {
             .map_err(|e| CxpError::Serialization(e.to_string()))?;
         data.insert("settings.msgpack".to_string(), settings_data);
 
+        // Serialize last_full_update
+        let update_data = rmp_serde::to_vec(&self.last_full_update)
+            .map_err(|e| CxpError::Serialization(e.to_string()))?;
+        data.insert("last_full_update.msgpack".to_string(), update_data);
+
         Ok(data)
     }
 
@@ -654,6 +663,14 @@ impl ContextAIExtension {
             }
         };
 
+        // Deserialize last_full_update
+        let last_full_update = if let Some(update_data) = data.get("last_full_update.msgpack") {
+            rmp_serde::from_slice(update_data)
+                .map_err(|e| CxpError::Serialization(e.to_string()))?
+        } else {
+            None
+        };
+
         Ok(Self {
             conversations,
             files,
@@ -663,6 +680,7 @@ impl ContextAIExtension {
             habit_history,
             dictionary,
             settings,
+            last_full_update,
         })
     }
 

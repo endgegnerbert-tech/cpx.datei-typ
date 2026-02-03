@@ -73,24 +73,45 @@ pub struct FileEntry {
 }
 
 /// A CXP file handle
-#[derive(Debug, Clone)]
-pub struct CxpFile {
+/// A CXP file handle
+#[derive(Debug)]
+pub struct CxpFile<R: Read + std::io::Seek = std::fs::File> {
     /// The manifest
     pub manifest: Manifest,
     /// File map
     pub file_map: FileMap,
     /// Chunk store
     pub chunk_store: ChunkStore,
+    /// The underlying zip archive
+    archive: std::sync::Arc<std::sync::Mutex<ZipArchive<R>>>,
 }
 
-impl CxpFile {
+impl<R: Read + std::io::Seek> Clone for CxpFile<R> {
+    fn clone(&self) -> Self {
+        Self {
+            manifest: self.manifest.clone(),
+            file_map: self.file_map.clone(),
+            chunk_store: self.chunk_store.clone(),
+            archive: self.archive.clone(),
+        }
+    }
+}
+
+impl CxpFile<std::fs::File> {
     /// Open a CXP file from disk
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let file = File::open(path)
             .map_err(|e| CxpError::InvalidFormat(format!("Failed to open CXP file: {}", e)))?;
+        
+        Self::new(file)
+    }
+}
 
-        let mut archive = ZipArchive::new(file)
+impl<R: Read + std::io::Seek> CxpFile<R> {
+    /// Open a CXP file from any Read + Seek
+    pub fn new(reader: R) -> Result<Self> {
+        let mut archive = ZipArchive::new(reader)
             .map_err(|e| CxpError::InvalidFormat(format!("Failed to read CXP archive: {}", e)))?;
 
         // Read manifest
@@ -121,42 +142,62 @@ impl CxpFile {
             manifest,
             file_map,
             chunk_store,
+            archive: std::sync::Arc::new(std::sync::Mutex::new(archive)),
         })
+    }
+
+    /// Open a CXP file from an in-memory buffer
+    /// Note: This is a convenience method that returns a specific type CxpFile<Cursor<Vec<u8>>>
+    pub fn from_bytes(data: Vec<u8>) -> Result<CxpFile<std::io::Cursor<Vec<u8>>>> {
+        let cursor = std::io::Cursor::new(data);
+        CxpFile::new(cursor)
     }
 
     /// Estimate memory size of this CXP when fully loaded
     pub fn estimate_memory_size(&self) -> usize {
         // Manifest size estimate
         let manifest_size = std::mem::size_of::<Manifest>()
-            + self.manifest.topics.len() * 32  // Average topic string
-            + self.manifest.file_types.len() * 128  // Average file type entry
+            + self.manifest.topics.len() * 32
+            + self.manifest.file_types.len() * 128
             + self.manifest.extensions.len() * 32;
 
         // File map size estimate
         let file_map_size = self.file_map.files.len() * (
             std::mem::size_of::<FileEntry>()
-            + 100  // Average path string
+            + 100
         );
 
-        // Chunk store - assume compressed chunks are 4KB average
-        let chunk_size = self.manifest.stats.unique_chunks * 4096;
+        manifest_size + file_map_size
+    }
 
-        manifest_size + file_map_size + chunk_size
+    /// Read a specific chunk by ID
+    pub fn read_chunk(&self, chunk_id: &str) -> Result<Vec<u8>> {
+        let chunk_name = format!("chunks/{}.zst", chunk_id);
+        
+        let mut archive = self.archive.lock().map_err(|_| CxpError::Io("Lock poisoned".to_string()))?;
+        let mut entry = archive.by_name(&chunk_name)
+            .map_err(|_| CxpError::InvalidFormat(format!("Chunk not found: {}", chunk_name)))?;
+        
+        let mut compressed = Vec::new();
+        entry.read_to_end(&mut compressed)?;
+        
+        decompress(&compressed)
+            .map_err(|e| CxpError::Serialization(format!("Failed to decompress chunk {}: {}", chunk_id, e)))
     }
 
     /// Get a file's content from the CXP
     pub fn get_file_content(&self, file_path: &str) -> Result<Option<String>> {
         let entry = match self.file_map.files.get(file_path) {
-            Some(e) => e,
+            Some(e) => e, // Clone to avoid borrow check issues? No, &self is fine if we return String
             None => return Ok(None),
         };
 
-        // Collect all chunks for this file
         let mut content = String::new();
         for chunk_ref in &entry.chunks {
-            if let Some(chunk) = self.chunk_store.get(&chunk_ref.hash) {
-                content.push_str(&String::from_utf8_lossy(&chunk.data));
-            }
+            // First 16 chars of hash is the ID
+            let chunk_id = &chunk_ref.hash[..16];
+            let data = self.read_chunk(chunk_id)?;
+            content.push_str(&String::from_utf8_lossy(&data));
         }
 
         Ok(Some(content))

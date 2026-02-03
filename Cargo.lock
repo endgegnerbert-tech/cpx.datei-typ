@@ -488,6 +488,7 @@ dependencies = [
  "clap",
  "cxp-core",
  "dirs",
+ "rayon",
  "rusqlite",
  "serde_json",
  "tempfile",

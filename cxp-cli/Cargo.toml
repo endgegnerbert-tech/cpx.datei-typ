@@ -22,6 +22,9 @@ full = ["embeddings", "search", "multimodal", "contextai", "scanner"]
 [dependencies]
 cxp-core = { path = "../cxp-core" }
 
+# Parallelism
+rayon.workspace = true
+
 # CLI
 clap.workspace = true
 

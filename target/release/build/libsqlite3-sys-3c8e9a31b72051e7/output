@@ -6,7 +6,7 @@ cargo:rerun-if-env-changed=SQLITE_MAX_VARIABLE_NUMBER
 cargo:rerun-if-env-changed=SQLITE_MAX_EXPR_DEPTH
 cargo:rerun-if-env-changed=SQLITE_MAX_COLUMN
 cargo:rerun-if-env-changed=LIBSQLITE3_FLAGS
-OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/libsqlite3-sys-3c8e9a31b72051e7/out)
+OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/libsqlite3-sys-3c8e9a31b72051e7/out)
 OPT_LEVEL = Some(3)
 TARGET = Some(x86_64-apple-darwin)
 CARGO_ENCODED_RUSTFLAGS = Some()
@@ -51,5 +51,5 @@ ARFLAGS_x86_64_apple_darwin = None
 cargo:rerun-if-env-changed=ARFLAGS_x86_64-apple-darwin
 ARFLAGS_x86_64-apple-darwin = None
 cargo:rustc-link-lib=static=sqlite3
-cargo:rustc-link-search=native=/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/libsqlite3-sys-3c8e9a31b72051e7/out
-cargo:lib_dir=/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/libsqlite3-sys-3c8e9a31b72051e7/out
+cargo:rustc-link-search=native=/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/libsqlite3-sys-3c8e9a31b72051e7/out
+cargo:lib_dir=/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/libsqlite3-sys-3c8e9a31b72051e7/out

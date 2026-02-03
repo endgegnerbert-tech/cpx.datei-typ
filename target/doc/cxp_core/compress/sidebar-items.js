@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_COMPRESSION_LEVEL"],"fn":["compress","compress_with_level","compress_with_stats","decompress"],"struct":["CompressionStats"]};

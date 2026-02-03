@@ -86,6 +86,6 @@ ARFLAGS_x86_64_apple_darwin = None
 cargo:rerun-if-env-changed=ARFLAGS_x86_64-apple-darwin
 ARFLAGS_x86_64-apple-darwin = None
 cargo:rustc-link-lib=static=bz2
-cargo:rustc-link-search=native=/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/bzip2-sys-b6197ed96905e18c/out/lib
-cargo:root=/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/bzip2-sys-b6197ed96905e18c/out
-cargo:include=/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/bzip2-sys-b6197ed96905e18c/out/include
+cargo:rustc-link-search=native=/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/bzip2-sys-b6197ed96905e18c/out/lib
+cargo:root=/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/bzip2-sys-b6197ed96905e18c/out
+cargo:include=/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/bzip2-sys-b6197ed96905e18c/out/include

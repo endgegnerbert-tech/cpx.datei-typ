@@ -1,5 +1,5 @@
 cargo:rerun-if-env-changed=ZSTD_SYS_USE_PKG_CONFIG
-OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
+OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
 OPT_LEVEL = Some(3)
 TARGET = Some(x86_64-apple-darwin)
 CARGO_ENCODED_RUSTFLAGS = Some()
@@ -27,7 +27,7 @@ cargo:rerun-if-env-changed=CFLAGS_x86_64_apple_darwin
 CFLAGS_x86_64_apple_darwin = None
 cargo:rerun-if-env-changed=CFLAGS_x86_64-apple-darwin
 CFLAGS_x86_64-apple-darwin = None
-OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
+OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
 cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
 cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
 CRATE_CC_NO_DEFAULTS = None
@@ -43,7 +43,7 @@ cargo:rerun-if-env-changed=CFLAGS_x86_64_apple_darwin
 CFLAGS_x86_64_apple_darwin = None
 cargo:rerun-if-env-changed=CFLAGS_x86_64-apple-darwin
 CFLAGS_x86_64-apple-darwin = None
-OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
+OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
 cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
 cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
 CRATE_CC_NO_DEFAULTS = None
@@ -59,7 +59,7 @@ cargo:rerun-if-env-changed=CFLAGS_x86_64_apple_darwin
 CFLAGS_x86_64_apple_darwin = None
 cargo:rerun-if-env-changed=CFLAGS_x86_64-apple-darwin
 CFLAGS_x86_64-apple-darwin = None
-OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
+OUT_DIR = Some(/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out)
 cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
 cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
 CRATE_CC_NO_DEFAULTS = None
@@ -129,6 +129,6 @@ ARFLAGS_x86_64_apple_darwin = None
 cargo:rerun-if-env-changed=ARFLAGS_x86_64-apple-darwin
 ARFLAGS_x86_64-apple-darwin = None
 cargo:rustc-link-lib=static=zstd
-cargo:rustc-link-search=native=/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out
-cargo:root=/Users/einarjaeger/Documents/GitHub/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out
+cargo:rustc-link-search=native=/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out
+cargo:root=/Users/einarjaeger/Documents/GitHub/antigravConMan/cpx.datei typ/target/release/build/zstd-sys-a213b8a03fbb1b11/out
 cargo:include=/Users/einarjaeger/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.0.16+zstd.1.5.7/zstd/lib

@@ -21,6 +21,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
+use rayon::prelude::*;
 
 #[derive(Parser)]
 #[command(name = "cxp")]
@@ -183,7 +184,8 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Setup logging
@@ -206,7 +208,23 @@ fn main() -> Result<()> {
         Commands::List { file, long } => list_files(&file, long),
         Commands::Extract { file, path, output } => extract_file(&file, &path, output.as_deref()),
         Commands::Query { file, query, top_k, ignore_case } => {
-            query_files(&file, &query, top_k, ignore_case)
+            let file = file.clone();
+            let query = query.clone();
+            let top_k = top_k;
+            let ignore_case = ignore_case;
+
+            let handle = tokio::task::spawn_blocking(move || {
+                query_files(&file, &query, top_k, ignore_case)
+            });
+
+            match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+                Ok(result) => result??,
+                Err(_) => {
+                    eprintln!("Error: Query timed out after 30 seconds.");
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
         }
         #[cfg(all(feature = "embeddings", feature = "search"))]
         Commands::Search { file, query, top_k, model, result_type, image } => {
@@ -345,6 +363,7 @@ fn build_cxp(
 }
 
 fn show_info(file: &PathBuf) -> Result<()> {
+    // Read manifest directly without full load if possible, but CxpReader is fine for info
     let reader = CxpReader::open(file).context("Failed to open CXP file")?;
     let manifest = reader.manifest();
 
@@ -361,13 +380,17 @@ fn show_info(file: &PathBuf) -> Result<()> {
         "  Original size:{:.2} MB",
         manifest.stats.original_size_bytes as f64 / 1024.0 / 1024.0
     );
+    
+    // Fix 0MB bug: Use actual file size
+    let file_size = std::fs::metadata(file)?.len();
     println!(
         "  CXP size:     {:.2} MB",
-        manifest.stats.cxp_size_bytes as f64 / 1024.0 / 1024.0
+        file_size as f64 / 1024.0 / 1024.0
     );
+    
     println!(
         "  Compression:  {:.1}%",
-        manifest.stats.compression_ratio * 100.0
+        (file_size as f64 / manifest.stats.original_size_bytes as f64) * 100.0
     );
     println!(
         "  Dedup savings:{:.1}%",
@@ -476,10 +499,21 @@ struct SearchMatch {
 }
 
 fn query_files(file: &PathBuf, query: &str, top_k: usize, ignore_case: bool) -> Result<()> {
-    let reader = CxpReader::open(file).context("Failed to open CXP file")?;
+    use cxp_core::CxpFile;
+    use std::fs::File;
+    use std::io::Read;
 
     println!("Searching for: \"{}\"", query);
     println!();
+    
+    // Load ENTIRE file into RAM to avoid disk contention during parallel search
+    println!("Loading index into RAM...");
+    let mut file_handle = File::open(file).context("Failed to open CXP file")?;
+    let mut buffer = Vec::new();
+    file_handle.read_to_end(&mut buffer).context("Failed to read CXP file")?;
+    
+    // Parse from memory
+    let mut cxp_mem = CxpFile::<std::io::Cursor<Vec<u8>>>::from_bytes(buffer).context("Failed to parse CXP file")?;
 
     let search_term = if ignore_case {
         query.to_lowercase()
@@ -487,13 +521,36 @@ fn query_files(file: &PathBuf, query: &str, top_k: usize, ignore_case: bool) -> 
         query.to_string()
     };
 
-    let mut results: Vec<SearchMatch> = Vec::new();
+    // 1. Read phase (Parallel I/O from RAM)
+    let paths = cxp_mem.list_files();
+    let paths_vec: Vec<String> = paths.iter().map(|s| s.to_string()).collect();
+    
+    println!("Scanning {} files...", paths_vec.len());
 
-    // Search through all files
-    for path in reader.file_paths() {
-        if let Ok(content) = reader.read_file(path) {
-            // Convert to string (skip binary content)
-            if let Ok(text) = String::from_utf8(content) {
+    // Note: CxpFile matches CxpFile<Cursor<Vec<u8>>>
+    // We cannot share mutable reference to cxp_mem across threads directly if we modify it (unzip moves cursor?)
+    // Actually ZipArchive needs mutable reference to file to seek/read?
+    // standard zip crate ZipArchive uses `by_name` which takes `&mut self`.
+    // So we CANNOT parallelize reads from a single ZipArchive easily.
+    
+    // WORKAROUND: We need to extract the content sequentially but it will be fast because it's RAM.
+    // OR we clone the buffer for each thread? Too heavy (26MB * threads).
+    // The bottleneck was DISK SEEK using File handles.
+    // RAM seek is instant. Sequential RAM read should be ultra fast (GB/s).
+    
+    let mut files_data = Vec::with_capacity(paths_vec.len());
+    
+    // Sequential RAM read (Fast)
+    for path in &paths_vec {
+        if let Ok(Some(content)) = cxp_mem.get_file_content(path) {
+             files_data.push((path.clone(), content));
+        }
+    }
+
+    // 2. Search phase (Parallel CPU)
+    let mut results: Vec<SearchMatch> = files_data.par_iter()
+        .filter_map(|(path, text)| {
+             {
                 // Count matches and collect line numbers
                 let mut match_count = 0;
                 let mut line_numbers = Vec::new();
@@ -522,9 +579,14 @@ fn query_files(file: &PathBuf, query: &str, top_k: usize, ignore_case: bool) -> 
                     let snippet = snippet_lines
                         .iter()
                         .map(|(num, line)| {
-                            // Truncate long lines
-                            let truncated = if line.len() > 80 {
-                                format!("{}...", &line[..77])
+                            // Truncate long lines (Unicode-safe)
+                            let truncated = if line.chars().count() > 80 {
+                                // Find the byte index of the 77th character
+                                let byte_idx = line.char_indices()
+                                    .nth(77)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(line.len());
+                                format!("{}...", &line[..byte_idx])
                             } else {
                                 line.clone()
                             };
@@ -533,16 +595,17 @@ fn query_files(file: &PathBuf, query: &str, top_k: usize, ignore_case: bool) -> 
                         .collect::<Vec<_>>()
                         .join("\n");
 
-                    results.push(SearchMatch {
-                        path: path.to_string(),
+                    return Some(SearchMatch {
+                        path: path.clone(),
                         matches: match_count,
                         snippet,
                         line_numbers,
                     });
                 }
             }
-        }
-    }
+            None
+        })
+        .collect();
 
     // Sort by number of matches (descending)
     results.sort_by(|a, b| b.matches.cmp(&a.matches));

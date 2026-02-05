@@ -521,31 +521,20 @@ fn query_files(file: &PathBuf, query: &str, top_k: usize, ignore_case: bool) -> 
         query.to_string()
     };
 
-    // 1. Read phase (Parallel I/O from RAM)
+    // 1. Read phase (Parallel extraction and decompression)
     let paths = cxp_mem.list_files();
     let paths_vec: Vec<String> = paths.iter().map(|s| s.to_string()).collect();
     
     println!("Scanning {} files...", paths_vec.len());
 
-    // Note: CxpFile matches CxpFile<Cursor<Vec<u8>>>
-    // We cannot share mutable reference to cxp_mem across threads directly if we modify it (unzip moves cursor?)
-    // Actually ZipArchive needs mutable reference to file to seek/read?
-    // standard zip crate ZipArchive uses `by_name` which takes `&mut self`.
-    // So we CANNOT parallelize reads from a single ZipArchive easily.
-    
-    // WORKAROUND: We need to extract the content sequentially but it will be fast because it's RAM.
-    // OR we clone the buffer for each thread? Too heavy (26MB * threads).
-    // The bottleneck was DISK SEEK using File handles.
-    // RAM seek is instant. Sequential RAM read should be ultra fast (GB/s).
-    
-    let mut files_data = Vec::with_capacity(paths_vec.len());
-    
-    // Sequential RAM read (Fast)
-    for path in &paths_vec {
-        if let Ok(Some(content)) = cxp_mem.get_file_content(path) {
-             files_data.push((path.clone(), content));
-        }
-    }
+    let files_data: Vec<(String, String)> = paths_vec.par_iter()
+        .filter_map(|path| {
+            match cxp_mem.get_file_content(path) {
+                Ok(Some(content)) => Some((path.clone(), content)),
+                _ => None
+            }
+        })
+        .collect();
 
     // 2. Search phase (Parallel CPU)
     let mut results: Vec<SearchMatch> = files_data.par_iter()

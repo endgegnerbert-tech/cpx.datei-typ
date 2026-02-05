@@ -71,10 +71,14 @@ impl BinaryEmbedding {
         let byte_count = (dimensions + 7) / 8;
         let mut bits = vec![0u8; byte_count];
 
-        for (i, &value) in embedding.iter().enumerate() {
-            if value > 0.0 {
-                bits[i / 8] |= 1 << (i % 8);
+        for (i, chunk) in embedding.chunks(8).enumerate() {
+            let mut byte = 0u8;
+            for (j, &value) in chunk.iter().enumerate() {
+                if value > 0.0 {
+                    byte |= 1 << j;
+                }
             }
+            bits[i] = byte;
         }
 
         Self { bits, dimensions }
@@ -132,6 +136,17 @@ impl Int8Embedding {
             .sum();
 
         sum as f32 * self.scale * other.scale
+    }
+
+    /// Compute dot product with a float32 vector
+    pub fn dot_product_f32(&self, query: &[f32]) -> f32 {
+        let sum: f32 = self.values
+            .iter()
+            .zip(query.iter())
+            .map(|(&v, &q)| (v as f32) * q)
+            .sum();
+
+        sum * self.scale
     }
 
     /// Size in bytes

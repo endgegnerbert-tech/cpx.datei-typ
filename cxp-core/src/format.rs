@@ -334,17 +334,18 @@ impl CxpBuilder {
 
     /// Process all scanned files
     pub fn process(&mut self) -> Result<&mut Self> {
+        use rayon::prelude::*;
         let source_dir = self.source_dir.clone();
 
-        // Process text files and collect chunks
+        // Process text files and collect chunks in parallel
         let results: Vec<_> = self.files
-            .iter()
+            .par_iter()
             .filter_map(|path| {
                 self.process_file(path, &source_dir).ok()
             })
             .collect();
 
-        // Add to chunk store and file map
+        // Add to chunk store and file map sequentially (ChunkStore is not thread-safe)
         for (entry, chunks) in results {
             let chunk_refs = self.chunk_store.add_many(chunks);
 
@@ -362,23 +363,28 @@ impl CxpBuilder {
         // Process images if enabled (store as single chunks - whole image = 1 chunk)
         #[cfg(feature = "multimodal")]
         if self.process_images {
-            for path in &self.image_files.clone() {
-                if let Ok((entry, chunk)) = self.process_image(path, &source_dir) {
-                    // Create chunk ref before adding to store
-                    let chunk_ref = ChunkRef::from(&chunk);
-                    self.chunk_store.add(chunk);
+            let image_results: Vec<_> = self.image_files
+                .par_iter()
+                .filter_map(|path| {
+                    self.process_image(path, &source_dir).ok()
+                })
+                .collect();
 
-                    // Update manifest with file type info
-                    self.manifest.add_file_type(&entry.extension, &entry.path, entry.size);
+            for (entry, chunk) in image_results {
+                // Create chunk ref before adding to store
+                let chunk_ref = ChunkRef::from(&chunk);
+                self.chunk_store.add(chunk);
 
-                    // Store file entry with chunk ref
-                    let entry_with_ref = FileEntry {
-                        chunks: vec![chunk_ref],
-                        is_image: true,
-                        ..entry
-                    };
-                    self.file_map.files.insert(entry_with_ref.path.clone(), entry_with_ref);
-                }
+                // Update manifest with file type info
+                self.manifest.add_file_type(&entry.extension, &entry.path, entry.size);
+
+                // Store file entry with chunk ref
+                let entry_with_ref = FileEntry {
+                    chunks: vec![chunk_ref],
+                    is_image: true,
+                    ..entry
+                };
+                self.file_map.files.insert(entry_with_ref.path.clone(), entry_with_ref);
             }
 
             tracing::info!("Processed {} image files", self.image_files.len());
@@ -817,14 +823,25 @@ impl CxpBuilder {
         let chunks: Vec<_> = self.chunk_store.chunks().collect();
         let total_chunks = chunks.len();
 
-        for (i, chunk) in chunks.iter().enumerate() {
-            let chunk_name = format!("chunks/{}.zst", chunk.id());
-            let compressed = compress(&chunk.data)?;
+        tracing::info!("Compressing {} chunks in parallel...", total_chunks);
+        
+        // Parallel compression (CPU intensive)
+        use rayon::prelude::*;
+        let compressed_chunks: Vec<_> = chunks.par_iter()
+            .map(|chunk| {
+                let compressed = compress(&chunk.data).expect("Compression failed");
+                (chunk.id().to_string(), compressed)
+            })
+            .collect();
+
+        tracing::info!("Writing compressed chunks to archive...");
+        for (i, (id, compressed)) in compressed_chunks.into_iter().enumerate() {
+            let chunk_name = format!("chunks/{}.zst", id);
 
             zip.start_file(&chunk_name, options.clone())?;
             zip.write_all(&compressed)?;
 
-            if (i + 1) % 100 == 0 || i + 1 == total_chunks {
+            if (i + 1) % 1000 == 0 || i + 1 == total_chunks {
                 tracing::debug!("Written {}/{} chunks", i + 1, total_chunks);
             }
         }
@@ -1345,15 +1362,12 @@ impl CxpReader {
         // Search with HNSW (binary)
         let candidates = index.search_binary_embedding(&query_binary, top_k * 2)?;
 
-        // Rescore with Int8 for better accuracy
-        let query_int8 = Int8Embedding::from_float(query_embedding);
-
         let mut rescored: Vec<_> = candidates
             .iter()
             .map(|result| {
                 let chunk_id = result.id as usize;
                 let score = if chunk_id < embeddings.int8.len() {
-                    embeddings.int8[chunk_id].dot_product(&query_int8)
+                    embeddings.int8[chunk_id].dot_product_f32(query_embedding)
                 } else {
                     0.0
                 };

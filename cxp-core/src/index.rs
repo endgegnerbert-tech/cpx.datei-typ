@@ -80,7 +80,7 @@ impl HnswConfig {
     /// Create config for binary embeddings with Hamming distance
     pub fn binary(dimensions: usize) -> Self {
         Self {
-            dimensions: (dimensions + 7) / 8, // Convert bits to bytes
+            dimensions,
             metric: DistanceMetric::Hamming,
             connectivity: 16,
             expansion_add: 128,
@@ -115,7 +115,7 @@ impl HnswConfig {
     #[cfg(feature = "multimodal")]
     pub fn multimodal_binary() -> Self {
         Self {
-            dimensions: 64, // 512 bits = 64 bytes
+            dimensions: 512,
             metric: DistanceMetric::Hamming,
             connectivity: 16,
             expansion_add: 128,
@@ -196,10 +196,11 @@ impl HnswIndex {
     /// Note: When using binary quantization (B1), usearch still expects f32 input
     /// and handles the quantization internally. This method converts bits to f32.
     pub fn add_binary(&mut self, id: u64, bits: &[u8]) -> Result<()> {
-        if bits.len() != self.config.dimensions {
+        let expected_bytes = (self.config.dimensions + 7) / 8;
+        if bits.len() != expected_bytes {
             return Err(CxpError::Search(format!(
                 "Binary vector size mismatch: expected {} bytes, got {}",
-                self.config.dimensions,
+                expected_bytes,
                 bits.len()
             )));
         }
@@ -213,7 +214,7 @@ impl HnswIndex {
         }
 
         // Truncate to actual dimensions (bits * 8 might be more than needed)
-        float_vec.truncate(self.config.dimensions * 8);
+        float_vec.truncate(self.config.dimensions);
 
         self.index
             .add(id, &float_vec)
@@ -286,10 +287,11 @@ impl HnswIndex {
     /// Note: When using binary quantization (B1), usearch still expects f32 input
     /// and handles the quantization internally. This method converts bits to f32.
     pub fn search_binary(&self, bits: &[u8], k: usize) -> Result<Vec<SearchResult>> {
-        if bits.len() != self.config.dimensions {
+        let expected_bytes = (self.config.dimensions + 7) / 8;
+        if bits.len() != expected_bytes {
             return Err(CxpError::Search(format!(
                 "Query binary size mismatch: expected {} bytes, got {}",
-                self.config.dimensions,
+                expected_bytes,
                 bits.len()
             )));
         }
@@ -303,7 +305,7 @@ impl HnswIndex {
         }
 
         // Truncate to actual dimensions (bits * 8 might be more than needed)
-        float_vec.truncate(self.config.dimensions * 8);
+        float_vec.truncate(self.config.dimensions);
 
         let results = self
             .index
@@ -469,7 +471,7 @@ mod tests {
     fn test_create_index_binary() {
         let config = HnswConfig::binary(256);
         let index = HnswIndex::new(config).unwrap();
-        assert_eq!(index.config.dimensions, 32); // 256 bits = 32 bytes
+        assert_eq!(index.config.dimensions, 256); // 256 bits
     }
 
     #[test]

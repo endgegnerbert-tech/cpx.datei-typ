@@ -18,7 +18,7 @@
 //! ```
 
 use crate::chunker::{chunk_content, Chunk, ChunkRef};
-use crate::compress::{compress, decompress, compress_with_dict, decompress_with_dict, train_dictionary};
+use crate::compress::{compress, decompress, compress_with_level, compress_with_dict, decompress_with_dict, train_dictionary};
 use crate::dedup::ChunkStore;
 use crate::manifest::Manifest;
 use crate::extensions::{Extension, ExtensionManager};

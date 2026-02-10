@@ -145,6 +145,7 @@ impl Manifest {
             children: ChildrenMap::new(),
             parent_path: None,
             tier: FileTier::Warm,
+            is_solid: false,
             categories: Vec::new(),
             keywords: Vec::new(),
             last_accessed: None,

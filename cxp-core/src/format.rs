@@ -18,7 +18,7 @@
 //! ```
 
 use crate::chunker::{chunk_content, Chunk, ChunkRef};
-use crate::compress::{compress, decompress};
+use crate::compress::{compress, decompress, compress_with_dict, decompress_with_dict, train_dictionary};
 use crate::dedup::ChunkStore;
 use crate::manifest::Manifest;
 use crate::extensions::{Extension, ExtensionManager};
@@ -65,8 +65,8 @@ pub struct FileEntry {
     pub extension: String,
     /// Original file size
     pub size: u64,
-    /// Chunk references that make up this file
-    pub chunks: Vec<ChunkRef>,
+    /// Chunk indices (pointing to Manifest.chunks)
+    pub chunks: Vec<u32>,
     /// Is this an image file? (only relevant with multimodal feature)
     #[serde(default)]
     pub is_image: bool,
@@ -82,6 +82,8 @@ pub struct CxpFile<R: Read + std::io::Seek = std::fs::File> {
     pub file_map: FileMap,
     /// Chunk store
     pub chunk_store: ChunkStore,
+    /// Zstandard dictionary (optional)
+    pub dictionary: Option<Vec<u8>>,
     /// The underlying zip archive
     archive: std::sync::Arc<std::sync::Mutex<ZipArchive<R>>>,
 }
@@ -92,6 +94,7 @@ impl<R: Read + std::io::Seek> Clone for CxpFile<R> {
             manifest: self.manifest.clone(),
             file_map: self.file_map.clone(),
             chunk_store: self.chunk_store.clone(),
+            dictionary: self.dictionary.clone(),
             archive: self.archive.clone(),
         }
     }
@@ -135,6 +138,19 @@ impl<R: Read + std::io::Seek> CxpFile<R> {
                 .map_err(|e| CxpError::Serialization(format!("Failed to parse file_map: {}", e)))?
         };
 
+        // Read dictionary (optional)
+        let dictionary = {
+            let mut entry = archive.by_name("dictionary.zst");
+            match entry {
+                Ok(mut e) => {
+                    let mut data = Vec::new();
+                    e.read_to_end(&mut data).ok();
+                    Some(data)
+                },
+                Err(_) => None,
+            }
+        };
+
         // Create chunk store (chunks loaded on demand)
         let chunk_store = ChunkStore::new();
 
@@ -142,6 +158,7 @@ impl<R: Read + std::io::Seek> CxpFile<R> {
             manifest,
             file_map,
             chunk_store,
+            dictionary,
             archive: std::sync::Arc::new(std::sync::Mutex::new(archive)),
         })
     }
@@ -172,31 +189,53 @@ impl<R: Read + std::io::Seek> CxpFile<R> {
 
     /// Read a specific chunk by ID
     pub fn read_chunk(&self, chunk_id: &str) -> Result<Vec<u8>> {
-        let chunk_name = format!("chunks/{}.zst", chunk_id);
+        // Find index in manifest
+        let idx = self.manifest.chunks.iter().position(|c| c.id == chunk_id)
+            .ok_or_else(|| CxpError::InvalidFormat(format!("Chunk not found in manifest: {}", chunk_id)))?;
         
+        self.read_chunk_by_index(idx)
+    }
+
+    /// Read a chunk by its index
+    pub fn read_chunk_by_index(&self, idx: usize) -> Result<Vec<u8>> {
+        if !self.manifest.is_solid {
+            return Err(CxpError::InvalidFormat("Non-solid format not supported".to_string()));
+        }
+
         let mut archive = self.archive.lock().map_err(|_| CxpError::Io("Lock poisoned".to_string()))?;
-        let mut entry = archive.by_name(&chunk_name)
-            .map_err(|_| CxpError::InvalidFormat(format!("Chunk not found: {}", chunk_name)))?;
+        
+        let mut entry = archive.by_name("chunks.bin.zst")
+            .map_err(|_| CxpError::InvalidFormat("Solid chunk block not found".to_string()))?;
         
         let mut compressed = Vec::new();
         entry.read_to_end(&mut compressed)?;
         
-        decompress(&compressed)
-            .map_err(|e| CxpError::Serialization(format!("Failed to decompress chunk {}: {}", chunk_id, e)))
+        let decompressed = if let Some(ref dict) = self.dictionary {
+            decompress_with_dict(&compressed, dict)?
+        } else {
+            decompress(&compressed)?
+        };
+
+        // Calculate offset
+        let mut offset = 0;
+        for i in 0..idx {
+            offset += self.manifest.chunks[i].size as usize;
+        }
+        let end = offset + self.manifest.chunks[idx].size as usize;
+
+        Ok(decompressed[offset..end].to_vec())
     }
 
     /// Get a file's content from the CXP
     pub fn get_file_content(&self, file_path: &str) -> Result<Option<String>> {
         let entry = match self.file_map.files.get(file_path) {
-            Some(e) => e, // Clone to avoid borrow check issues? No, &self is fine if we return String
+            Some(e) => e,
             None => return Ok(None),
         };
 
         let mut content = String::new();
-        for chunk_ref in &entry.chunks {
-            // First 16 chars of hash is the ID
-            let chunk_id = &chunk_ref.hash[..16];
-            let data = self.read_chunk(chunk_id)?;
+        for &chunk_idx in &entry.chunks {
+            let data = self.read_chunk_by_index(chunk_idx as usize)?;
             content.push_str(&String::from_utf8_lossy(&data));
         }
 
@@ -232,6 +271,8 @@ pub struct CxpBuilder {
     file_map: FileMap,
     /// Chunk store with deduplication
     chunk_store: ChunkStore,
+    /// Zstandard dictionary (optional)
+    dictionary: Option<Vec<u8>>,
     /// Extension manager for app-specific data
     extension_manager: ExtensionManager,
     /// Embedding engine (optional)
@@ -264,6 +305,7 @@ impl CxpBuilder {
             manifest: Manifest::new(),
             file_map: FileMap::default(),
             chunk_store: ChunkStore::new(),
+            dictionary: None,
             extension_manager: ExtensionManager::new(),
             #[cfg(all(feature = "embeddings", feature = "search"))]
             embedding_engine: None,
@@ -347,14 +389,14 @@ impl CxpBuilder {
 
         // Add to chunk store and file map sequentially (ChunkStore is not thread-safe)
         for (entry, chunks) in results {
-            let chunk_refs = self.chunk_store.add_many(chunks);
+            let chunk_indices = self.chunk_store.add_many_indices(chunks);
 
             // Update manifest with file type info
             self.manifest.add_file_type(&entry.extension, &entry.path, entry.size);
 
             // Store file entry with chunk refs
             let entry_with_refs = FileEntry {
-                chunks: chunk_refs,
+                chunks: chunk_indices,
                 ..entry
             };
             self.file_map.files.insert(entry_with_refs.path.clone(), entry_with_refs);
@@ -371,16 +413,15 @@ impl CxpBuilder {
                 .collect();
 
             for (entry, chunk) in image_results {
-                // Create chunk ref before adding to store
-                let chunk_ref = ChunkRef::from(&chunk);
-                self.chunk_store.add(chunk);
+                // Add to store and get index
+                let (index, _) = self.chunk_store.add(chunk);
 
                 // Update manifest with file type info
                 self.manifest.add_file_type(&entry.extension, &entry.path, entry.size);
 
-                // Store file entry with chunk ref
+                // Store file entry with chunk index
                 let entry_with_ref = FileEntry {
-                    chunks: vec![chunk_ref],
+                    chunks: vec![index as u32],
                     is_image: true,
                     ..entry
                 };
@@ -803,48 +844,75 @@ impl CxpBuilder {
             self.generate_multimodal_embeddings()?;
         }
 
+        // Prepare chunks and metadata
+        let chunks: Vec<_> = self.chunk_store.chunks().collect();
+        
+        // Mark as solid format and populate metadata
+        self.manifest.is_solid = true;
+        self.manifest.chunks.clear();
+        for chunk in &chunks {
+            self.manifest.chunks.push(crate::manifest::ChunkMetadata {
+                id: chunk.id().to_string(),
+                size: chunk.data.len() as u32,
+            });
+        }
+
+        // Train dictionary if we have enough chunks (more than 10)
+        let chunk_data: Vec<_> = chunks.iter().map(|c| c.data.clone()).collect();
+        if chunk_data.len() >= 10 {
+            tracing::info!("Training Zstandard dictionary with {} samples...", chunk_data.len());
+            // Use up to 1000 samples for better training
+            let samples: Vec<_> = chunk_data.iter().take(1000).cloned().collect();
+            if let Ok(dict) = train_dictionary(&samples, 1024 * 128) { // 128KB dictionary
+                tracing::info!("Dictionary trained successfully ({} bytes)", dict.len());
+                self.dictionary = Some(dict);
+            }
+        }
+
         let file = File::create(output_path)?;
         let mut zip = ZipWriter::new(file);
+
+        // Options for the manifest and file map (use Zstd for higher efficiency)
+        let meta_options = FileOptions::<()>::default()
+            .compression_method(CompressionMethod::Zstd)
+            .compression_level(Some(19)); // Ultra level for critical metadata
 
         let options = FileOptions::<()>::default()
             .compression_method(CompressionMethod::Stored); // We compress chunks ourselves
 
-        // Write manifest
+        // Write manifest (now with chunk metadata)
         let manifest_data = self.manifest.to_msgpack()?;
-        zip.start_file("manifest.msgpack", options.clone())?;
+        zip.start_file("manifest.msgpack", meta_options.clone())?;
         zip.write_all(&manifest_data)?;
 
         // Write file map
         let file_map_data = rmp_serde::to_vec(&self.file_map)?;
-        zip.start_file("file_map.msgpack", options.clone())?;
+        zip.start_file("file_map.msgpack", meta_options.clone())?;
         zip.write_all(&file_map_data)?;
 
-        // Write chunks
-        let chunks: Vec<_> = self.chunk_store.chunks().collect();
-        let total_chunks = chunks.len();
-
-        tracing::info!("Compressing {} chunks in parallel...", total_chunks);
-        
-        // Parallel compression (CPU intensive)
-        use rayon::prelude::*;
-        let compressed_chunks: Vec<_> = chunks.par_iter()
-            .map(|chunk| {
-                let compressed = compress(&chunk.data).expect("Compression failed");
-                (chunk.id().to_string(), compressed)
-            })
-            .collect();
-
-        tracing::info!("Writing compressed chunks to archive...");
-        for (i, (id, compressed)) in compressed_chunks.into_iter().enumerate() {
-            let chunk_name = format!("chunks/{}.zst", id);
-
-            zip.start_file(&chunk_name, options.clone())?;
-            zip.write_all(&compressed)?;
-
-            if (i + 1) % 1000 == 0 || i + 1 == total_chunks {
-                tracing::debug!("Written {}/{} chunks", i + 1, total_chunks);
-            }
+        // Write dictionary if present
+        if let Some(ref dict) = self.dictionary {
+            zip.start_file("dictionary.zst", meta_options.clone())?;
+            zip.write_all(dict)?;
         }
+
+        // Write chunks
+        tracing::info!("Writing solid chunk block to archive...");
+        
+        // Concatenate all chunks into a solid block
+        let mut solid_block = Vec::with_capacity(self.manifest.stats.original_size_bytes as usize);
+        for chunk in &chunks {
+            solid_block.extend_from_slice(&chunk.data);
+        }
+        
+        let compressed_chunks = if let Some(ref dict) = self.dictionary {
+            compress_with_dict(&solid_block, dict, 19)?
+        } else {
+            compress_with_level(&solid_block, 19)?
+        };
+
+        zip.start_file("chunks.bin.zst", meta_options.clone())?;
+        zip.write_all(&compressed_chunks)?;
 
         // Write embeddings if present
         #[cfg(all(feature = "embeddings", feature = "search"))]
@@ -1100,15 +1168,39 @@ impl CxpReader {
 
         let mut content = Vec::with_capacity(entry.size as usize);
 
-        for chunk_ref in &entry.chunks {
-            let chunk_name = format!("chunks/{}.zst", &chunk_ref.hash[..16]);
-            let mut chunk_file = archive.by_name(&chunk_name)?;
-
+        // Optimization: if solid, load the chunk block once
+        let mut solid_block: Option<Vec<u8>> = None;
+        if self.manifest.is_solid {
+            let mut chunk_file = archive.by_name("chunks.bin.zst")?;
             let mut compressed = Vec::new();
             chunk_file.read_to_end(&mut compressed)?;
+            solid_block = Some(decompress(&compressed)?);
+        }
 
-            let decompressed = decompress(&compressed)?;
-            content.extend_from_slice(&decompressed);
+        // Calculate chunk offsets if solid
+        let mut chunk_offsets = Vec::new();
+        if solid_block.is_some() {
+            let mut current_offset = 0;
+            for meta in &self.manifest.chunks {
+                chunk_offsets.push(current_offset);
+                current_offset += meta.size as usize;
+            }
+        }
+
+        for &chunk_idx in &entry.chunks {
+            let idx = chunk_idx as usize;
+            
+            let data = if let Some(ref block) = solid_block {
+                let start = chunk_offsets[idx];
+                let end = start + self.manifest.chunks[idx].size as usize;
+                block[start..end].to_vec()
+            } else {
+                // Fallback for non-solid or old format (though non-solid uses separate files)
+                // For brevity, we assume new format if solid is true
+                return Err(CxpError::InvalidFormat("Non-solid format not implemented in this version".to_string()));
+            };
+            
+            content.extend_from_slice(&data);
         }
 
         Ok(content)

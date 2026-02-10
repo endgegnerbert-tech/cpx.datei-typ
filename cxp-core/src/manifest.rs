@@ -8,6 +8,15 @@ use std::collections::HashMap;
 
 use crate::recursive::{ChildrenMap, FileTier};
 
+/// Metadata for a single chunk
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkMetadata {
+    /// Hash of the chunk (16-char prefix)
+    pub id: String,
+    /// Original size of the chunk
+    pub size: u32,
+}
+
 /// CXP Manifest - stored as manifest.msgpack in the CXP file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -22,6 +31,10 @@ pub struct Manifest {
 
     /// Statistics about the contents
     pub stats: ManifestStats,
+
+    /// Global list of chunk metadata (for solid format)
+    #[serde(default)]
+    pub chunks: Vec<ChunkMetadata>,
 
     /// File type breakdown
     pub file_types: HashMap<String, FileTypeInfo>,
@@ -56,6 +69,10 @@ pub struct Manifest {
     /// Tier of this CXP (Hot/Warm/Cold)
     #[serde(default)]
     pub tier: FileTier,
+
+    /// Whether chunks are stored in a solid block (v2.1+)
+    #[serde(default)]
+    pub is_solid: bool,
 
     /// Categories for this CXP
     #[serde(default)]
@@ -117,6 +134,7 @@ impl Manifest {
             created_at: now,
             updated_at: now,
             stats: ManifestStats::default(),
+            chunks: Vec::new(),
             file_types: HashMap::new(),
             topics: Vec::new(),
             embedding_model: None,

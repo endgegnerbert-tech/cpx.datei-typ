@@ -8,8 +8,10 @@ use std::collections::HashMap;
 /// Chunk store with deduplication
 #[derive(Debug, Default, Clone)]
 pub struct ChunkStore {
-    /// Chunks indexed by their hash
-    chunks: HashMap<String, Chunk>,
+    /// Chunks in order of discovery
+    chunks: Vec<Chunk>,
+    /// Maps hash to its index in the chunks vector
+    hash_to_index: HashMap<String, usize>,
     /// Statistics
     stats: DeduplicationStats,
 }
@@ -46,23 +48,36 @@ impl ChunkStore {
         Self::default()
     }
 
-    /// Add a chunk to the store, returns true if it was new (not a duplicate)
-    pub fn add(&mut self, chunk: Chunk) -> bool {
+    /// Add a chunk to the store, returns (index, is_new)
+    pub fn add(&mut self, chunk: Chunk) -> (usize, bool) {
         self.stats.total_chunks += 1;
         self.stats.total_bytes += chunk.length;
 
-        if self.chunks.contains_key(&chunk.hash) {
+        if let Some(&index) = self.hash_to_index.get(&chunk.hash) {
             self.stats.duplicates_found += 1;
-            false
+            (index, false)
         } else {
+            let index = self.chunks.len();
             self.stats.unique_chunks += 1;
             self.stats.deduplicated_bytes += chunk.length;
-            self.chunks.insert(chunk.hash.clone(), chunk);
-            true
+            self.hash_to_index.insert(chunk.hash.clone(), index);
+            self.chunks.push(chunk);
+            (index, true)
         }
     }
 
-    /// Add multiple chunks
+    /// Add multiple chunks and return their indices
+    pub fn add_many_indices(&mut self, chunks: Vec<Chunk>) -> Vec<u32> {
+        chunks
+            .into_iter()
+            .map(|chunk| {
+                let (index, _) = self.add(chunk);
+                index as u32
+            })
+            .collect()
+    }
+
+    /// Add multiple chunks (legacy support)
     pub fn add_many(&mut self, chunks: Vec<Chunk>) -> Vec<ChunkRef> {
         chunks
             .into_iter()
@@ -76,22 +91,22 @@ impl ChunkStore {
 
     /// Get a chunk by hash
     pub fn get(&self, hash: &str) -> Option<&Chunk> {
-        self.chunks.get(hash)
+        self.hash_to_index.get(hash).map(|&idx| &self.chunks[idx])
     }
 
     /// Check if a chunk exists
     pub fn contains(&self, hash: &str) -> bool {
-        self.chunks.contains_key(hash)
+        self.hash_to_index.contains_key(hash)
     }
 
-    /// Get all chunks
+    /// Get all chunks in order
     pub fn chunks(&self) -> impl Iterator<Item = &Chunk> {
-        self.chunks.values()
+        self.chunks.iter()
     }
 
     /// Iterate over all chunks with their hashes
     pub fn iter(&self) -> impl Iterator<Item = (&String, &Chunk)> {
-        self.chunks.iter()
+        self.hash_to_index.iter().map(move |(hash, &idx)| (hash, &self.chunks[idx]))
     }
 
     /// Get the number of unique chunks
@@ -111,7 +126,7 @@ impl ChunkStore {
 
     /// Take all chunks out of the store
     pub fn into_chunks(self) -> Vec<Chunk> {
-        self.chunks.into_values().collect()
+        self.chunks
     }
 }
 
@@ -130,11 +145,13 @@ mod tests {
         let chunks2 = chunk_content(content);
 
         for chunk in chunks1 {
-            assert!(store.add(chunk)); // First time: new
+            let (_, is_new) = store.add(chunk);
+            assert!(is_new); // First time: new
         }
 
         for chunk in chunks2 {
-            assert!(!store.add(chunk)); // Second time: duplicate
+            let (_, is_new) = store.add(chunk);
+            assert!(!is_new); // Second time: duplicate
         }
 
         let stats = store.stats();

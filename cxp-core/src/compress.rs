@@ -1,15 +1,24 @@
 //! Zstandard compression for chunks
 //!
 //! Provides efficient compression with good speed/ratio trade-off.
+//! Supports dictionary-based compression for improved efficiency on small chunks.
 
 use crate::{CxpError, Result};
 use zstd::stream::{encode_all, decode_all};
+use zstd::dict::{EncoderDictionary, DecoderDictionary};
 use std::io::Cursor;
 
 /// Default compression level (3 is a good balance)
 pub const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 
-/// Compress data using Zstandard
+/// Ultra compression level for metadata (Zstd level 19-22)
+pub const ULTRA_COMPRESSION_LEVEL: i32 = 19;
+
+/// Compress data using Zstandard with Ultra settings
+pub fn compress_ultra(data: &[u8]) -> Result<Vec<u8>> {
+    compress_with_level(data, ULTRA_COMPRESSION_LEVEL)
+}
+/// Compress data using Zstandard with default settings
 pub fn compress(data: &[u8]) -> Result<Vec<u8>> {
     compress_with_level(data, DEFAULT_COMPRESSION_LEVEL)
 }
@@ -20,10 +29,43 @@ pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>> {
     encode_all(cursor, level).map_err(|e| CxpError::Compression(e.to_string()))
 }
 
+/// Compress data using a Zstandard dictionary
+pub fn compress_with_dict(data: &[u8], dict: &[u8], level: i32) -> Result<Vec<u8>> {
+    let mut result = Vec::new();
+    let dict = EncoderDictionary::new(dict, level);
+    let mut encoder = zstd::stream::Encoder::with_prepared_dictionary(&mut result, &dict)
+        .map_err(|e| CxpError::Compression(e.to_string()))?;
+    
+    std::io::copy(&mut Cursor::new(data), &mut encoder)
+        .map_err(|e| CxpError::Compression(e.to_string()))?;
+    
+    encoder.finish().map_err(|e| CxpError::Compression(e.to_string()))?;
+    Ok(result)
+}
+
 /// Decompress Zstandard compressed data
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let cursor = Cursor::new(data);
     decode_all(cursor).map_err(|e| CxpError::Compression(e.to_string()))
+}
+
+/// Decompress data using a Zstandard dictionary
+pub fn decompress_with_dict(data: &[u8], dict: &[u8]) -> Result<Vec<u8>> {
+    let mut result = Vec::new();
+    let dict = DecoderDictionary::new(dict);
+    let mut decoder = zstd::stream::Decoder::with_prepared_dictionary(Cursor::new(data), &dict)
+        .map_err(|e| CxpError::Compression(e.to_string()))?;
+    
+    std::io::copy(&mut decoder, &mut result)
+        .map_err(|e| CxpError::Compression(e.to_string()))?;
+    
+    Ok(result)
+}
+
+/// Train a Zstandard dictionary from a collection of samples
+pub fn train_dictionary(samples: &[Vec<u8>], capacity: usize) -> Result<Vec<u8>> {
+    zstd::dict::from_continuous(samples, capacity)
+        .map_err(|e| CxpError::Compression(format!("Failed to train dictionary: {}", e)))
 }
 
 /// Compression statistics

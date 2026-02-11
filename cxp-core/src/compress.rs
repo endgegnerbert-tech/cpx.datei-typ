@@ -32,7 +32,7 @@ pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>> {
 /// Compress data using a Zstandard dictionary
 pub fn compress_with_dict(data: &[u8], dict: &[u8], level: i32) -> Result<Vec<u8>> {
     let mut result = Vec::new();
-    let dict = EncoderDictionary::new(dict, level);
+    let dict = EncoderDictionary::copy(dict, level);
     let mut encoder = zstd::stream::Encoder::with_prepared_dictionary(&mut result, &dict)
         .map_err(|e| CxpError::Compression(e.to_string()))?;
     
@@ -52,7 +52,7 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
 /// Decompress data using a Zstandard dictionary
 pub fn decompress_with_dict(data: &[u8], dict: &[u8]) -> Result<Vec<u8>> {
     let mut result = Vec::new();
-    let dict = DecoderDictionary::new(dict);
+    let dict = DecoderDictionary::copy(dict);
     let mut decoder = zstd::stream::Decoder::with_prepared_dictionary(Cursor::new(data), &dict)
         .map_err(|e| CxpError::Compression(e.to_string()))?;
     
@@ -64,7 +64,14 @@ pub fn decompress_with_dict(data: &[u8], dict: &[u8]) -> Result<Vec<u8>> {
 
 /// Train a Zstandard dictionary from a collection of samples
 pub fn train_dictionary(samples: &[Vec<u8>], capacity: usize) -> Result<Vec<u8>> {
-    zstd::dict::from_continuous(samples, capacity)
+    let mut data = Vec::new();
+    let mut sizes = Vec::new();
+    for sample in samples {
+        data.extend_from_slice(sample);
+        sizes.push(sample.len());
+    }
+    
+    zstd::dict::from_continuous(&data, &sizes, capacity)
         .map_err(|e| CxpError::Compression(format!("Failed to train dictionary: {}", e)))
 }
 
